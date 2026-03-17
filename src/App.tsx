@@ -36,6 +36,8 @@ interface ValidationResult {
   rawContent: string;
   allFields: { key: string; value: string }[];
   originalFile: File;
+  sent: boolean;
+  ntvStatus?: 'loading' | 'registered' | 'not_registered' | 'error';
 }
 
 export default function App() {
@@ -140,6 +142,13 @@ export default function App() {
       await sendEmail(recipients, `Divergência XML: ${result.fileName}`, html, attachments);
       
       setNotification({ type: 'success', message: `Relatório enviado para ${recipients.length} destinatário(s)!` });
+      
+      // Mark as sent
+      setResults(prev => {
+        const updated = [...prev];
+        updated[index] = { ...updated[index], sent: true };
+        return updated;
+      });
     } catch (error) {
       console.error(error);
       setNotification({ type: 'error', message: 'Falha ao enviar relatório com anexo.' });
@@ -183,6 +192,9 @@ export default function App() {
       );
       
       setNotification({ type: 'success', message: `Relatório de lote enviado para ${recipients.length} destinatário(s)!` });
+      
+      // Mark all results with errors as sent
+      setResults(prev => prev.map(r => r.errors.length > 0 ? { ...r, sent: true } : r));
     } catch (error) {
       console.error(error);
       setNotification({ type: 'error', message: 'Falha ao enviar relatório em lote com anexos.' });
@@ -260,8 +272,62 @@ export default function App() {
       errors,
       rawContent: text,
       allFields,
-      originalFile: file
+      originalFile: file,
+      sent: false
     };
+  };
+
+  const clearAll = () => setResults([]);
+
+  const checkNtvStatus = async (index: number, ncm: string) => {
+    if (!ncm) return;
+    
+    setResults(prev => {
+      const updated = [...prev];
+      if (updated[index]) updated[index] = { ...updated[index], ntvStatus: 'loading' };
+      return updated;
+    });
+
+    const url = "https://51a805d34213e248a3506f5db8fe28.55.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/655aac37bdea49b1b1221a2f37198754/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=-2l0x4h5cwmpZ20RCIbMrzaR0860ka4aB8_dDOVQQHQ";
+    
+    const payload = {
+      query: `SELECT * FROM PRTMST WHERE PRTNUM LIKE '%${ncm}%'`,
+      id_score: "12345"
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const contentType = response.headers.get("content-type");
+      let result;
+      if (contentType && contentType.includes("application/json")) {
+        result = await response.json();
+      } else {
+        const text = await response.text();
+        try { result = JSON.parse(text); } catch { result = text; }
+      }
+
+      const isRegistered = Array.isArray(result) && result.length > 0;
+      
+      setResults(prev => {
+        const updated = [...prev];
+        if (updated[index]) {
+          updated[index] = { ...updated[index], ntvStatus: isRegistered ? 'registered' : 'not_registered' };
+        }
+        return updated;
+      });
+    } catch (error) {
+      console.error("Erro ao verificar NTV:", error);
+      setResults(prev => {
+        const updated = [...prev];
+        if (updated[index]) updated[index] = { ...updated[index], ntvStatus: 'error' };
+        return updated;
+      });
+    }
   };
 
   const handleFiles = async (files: FileList | File[]) => {
@@ -272,7 +338,17 @@ export default function App() {
         newResults.push(res);
       }
     }
-    setResults(prev => [...newResults, ...prev]);
+    
+    setResults(prev => {
+      const combined = [...newResults, ...prev];
+      // Trigger background NTV checks for new results
+      newResults.forEach((res, i) => {
+        if (res.ncm) {
+          checkNtvStatus(i, res.ncm);
+        }
+      });
+      return combined;
+    });
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -295,8 +371,6 @@ export default function App() {
   const removeResult = (index: number) => {
     setResults(prev => prev.filter((_, i) => i !== index));
   };
-
-  const clearAll = () => setResults([]);
 
   return (
     <div className="min-h-screen font-sans text-dhl-dark">
@@ -352,11 +426,13 @@ export default function App() {
               {results.some(r => r.errors.length > 0) && (
                 <button 
                   onClick={handleSendBatchReport}
-                  disabled={isSendingBatch}
+                  disabled={isSendingBatch || results.filter(r => r.errors.length > 0).every(r => r.sent)}
                   className="bg-dhl-red text-white px-4 py-2 rounded-md transition-all flex items-center gap-2 font-bold text-sm shadow-md hover:bg-red-700 disabled:opacity-50"
                 >
                   {isSendingBatch ? (
                     <><Loader2 size={16} className="animate-spin" /> ENVIANDO LOTE...</>
+                  ) : results.filter(r => r.errors.length > 0).every(r => r.sent) ? (
+                    <><CheckCircle2 size={16} /> LOTE ENVIADO</>
                   ) : (
                     <><Mail size={16} /> REPORTAR TODAS AS DIVERGÊNCIAS</>
                   )}
@@ -554,7 +630,38 @@ export default function App() {
                         </tr>
                         <tr className="group hover:bg-gray-50 transition-colors">
                           <td className="py-4 font-bold text-gray-600">NCM Produto</td>
-                          <td className="py-4 font-mono">{result.ncm || "---"}</td>
+                          <td className="py-4 font-mono">
+                            <div className="flex flex-col gap-1">
+                              <span>{result.ncm || "---"}</span>
+                              {result.ncm && (
+                                <div className="flex items-center gap-2">
+                                  {result.ntvStatus === 'loading' ? (
+                                    <span className="text-[10px] text-blue-500 flex items-center gap-1 animate-pulse">
+                                      <Loader2 size={10} className="animate-spin" /> Verificando NTV...
+                                    </span>
+                                  ) : result.ntvStatus === 'registered' ? (
+                                    <span className="text-[10px] text-green-600 font-bold flex items-center gap-1">
+                                      <CheckCircle2 size={10} /> Já cadastrado no sistema NTV
+                                    </span>
+                                  ) : result.ntvStatus === 'not_registered' ? (
+                                    <span className="text-[10px] text-orange-600 font-bold flex items-center gap-1">
+                                      <AlertCircle size={10} /> Não cadastrado no NTV
+                                    </span>
+                                  ) : result.ntvStatus === 'error' ? (
+                                    <span className="text-[10px] text-red-500 flex items-center gap-1">
+                                      <XCircle size={10} /> Erro na consulta NTV
+                                    </span>
+                                  ) : null}
+                                  <button 
+                                    onClick={() => checkNtvStatus(idx, result.ncm)}
+                                    className="text-[9px] underline text-gray-400 hover:text-dhl-red uppercase tracking-tighter"
+                                  >
+                                    Revalidar
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </td>
                           <td className="py-4">
                             {result.ncm ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}
                           </td>
@@ -593,11 +700,13 @@ export default function App() {
                           
                           <button
                             onClick={() => handleSendReport(result, idx)}
-                            disabled={sendingEmailIdx !== null}
+                            disabled={sendingEmailIdx !== null || result.sent}
                             className="w-full py-2 bg-dhl-red text-white rounded-lg text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             {sendingEmailIdx === idx ? (
                               <><Loader2 size={16} className="animate-spin" /> ENVIANDO...</>
+                            ) : result.sent ? (
+                              <><CheckCircle2 size={16} /> RELATÓRIO ENVIADO</>
                             ) : (
                               <><Mail size={16} /> REPORTAR DIVERGÊNCIA</>
                             )}

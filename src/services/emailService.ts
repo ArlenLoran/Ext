@@ -70,7 +70,10 @@ export function buildXmlDivergenceEmailHtml(params: {
   const appUrlSafe = escapeHtml(params.appUrl || '');
 
   const errorsHtml = params.errors.map(err => 
-    `<li style="margin-bottom: 8px; color: #d40511;">${escapeHtml(err)}</li>`
+    `<tr style="border-bottom: 1px solid #f0f0f0;">
+      <td style="padding: 10px 0; vertical-align: top; width: 20px; color: #d40511; font-weight: bold;">•</td>
+      <td style="padding: 10px 0; font-size: 14px; color: #444444; line-height: 1.5;">${escapeHtml(err)}</td>
+    </tr>`
   ).join('');
 
   return `
@@ -79,47 +82,75 @@ export function buildXmlDivergenceEmailHtml(params: {
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>Divergência Detectada - ${fileNameSafe}</title>
+    <style>
+      @media only screen and (max-width: 620px) {
+        .container { width: 100% !important; border-radius: 0 !important; }
+        .content { padding: 20px !important; }
+      }
+    </style>
   </head>
-  <body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
-    <table border="0" cellpadding="0" cellspacing="0" width="100%">
+  <body style="margin: 0; padding: 0; background-color: #f6f6f6; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f6f6f6;">
       <tr>
-        <td align="center" style="padding: 40px 0;">
-          <table border="0" cellpadding="0" cellspacing="0" width="600" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-
+        <td align="center" style="padding: 30px 10px;">
+          <table border="0" cellpadding="0" cellspacing="0" width="600" class="container" style="background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e0e0e0;">
+            
+            <!-- DHL Top Bar -->
             <tr>
-              <td height="6" style="background-color: #ffcc00; line-height: 6px; font-size: 6px;">&nbsp;</td>
+              <td height="8" style="background-color: #ffcc00; font-size: 1px; line-height: 8px;">&nbsp;</td>
             </tr>
 
+            <!-- Header -->
             <tr>
-              <td style="background-color: #d40511; padding: 30px 40px;">
-                <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Divergência Detectada</h1>
-                <p style="margin: 8px 0 0 0; color: #ffe7ea; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">${appName}</p>
+              <td style="background-color: #d40511; padding: 35px 40px;" class="content">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                  <tr>
+                    <td>
+                      <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 900; text-transform: uppercase; letter-spacing: -0.5px; line-height: 1.2;">Divergência <br>Detectada</h1>
+                    </td>
+                    <td align="right" style="vertical-align: middle;">
+                      <div style="background-color: #ffffff; color: #d40511; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px;">XML Validator</div>
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
 
+            <!-- Main Content -->
             <tr>
-              <td style="padding: 40px;">
-                <p style="margin: 0 0 18px 0; font-size: 16px; color: #333333; font-weight: bold;">Olá Equipe de Logística,</p>
-                <p style="margin: 0 0 22px 0; font-size: 15px; color: #555555; line-height: 1.6;">
-                  O sistema <strong>${appName}</strong> identificou divergências críticas durante a validação do arquivo XML abaixo:
+              <td style="padding: 40px;" class="content">
+                <p style="margin: 0 0 20px 0; font-size: 16px; color: #1a1a1a; font-weight: 700;">Olá Equipe,</p>
+                <p style="margin: 0 0 30px 0; font-size: 15px; color: #555555; line-height: 1.6;">
+                  O sistema identificou divergências que impedem o processamento automático do arquivo XML abaixo. Por favor, revise as informações.
                 </p>
 
-                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-collapse: collapse; margin: 0 0 25px 0; background-color: #f9f9f9; border-radius: 8px; border: 1px solid #eeeeee;">
+                <!-- File Info Card -->
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fafafa; border-radius: 8px; border: 1px solid #f0f0f0; margin-bottom: 35px;">
                   <tr>
-                    <td style="padding: 20px;">
-                      <p style="margin: 0 0 5px 0; font-size: 11px; color:#777777; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">Arquivo</p>
-                      <p style="margin: 0 0 15px 0; font-size: 15px; color:#111111; font-weight: bold;">${fileNameSafe}</p>
-                      
+                    <td style="padding: 25px;">
                       <table border="0" cellpadding="0" cellspacing="0" width="100%">
                         <tr>
-                          <td width="50%">
-                            <p style="margin: 0 0 5px 0; font-size: 11px; color:#777777; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">nNF</p>
-                            <p style="margin: 0; font-size: 14px; color:#d40511; font-weight: bold;">${nNFSafe}</p>
+                          <td style="padding-bottom: 15px;">
+                            <div style="font-size: 11px; color: #999999; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; margin-bottom: 4px;">Arquivo XML</div>
+                            <div style="font-size: 16px; color: #1a1a1a; font-weight: 700; word-break: break-all;">${fileNameSafe}</div>
                           </td>
-                          <td width="50%">
-                            <p style="margin: 0 0 5px 0; font-size: 11px; color:#777777; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">CNPJ</p>
-                            <p style="margin: 0; font-size: 14px; color:#111111; font-weight: bold;">${cnpjSafe}</p>
+                        </tr>
+                        <tr>
+                          <td>
+                            <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                              <tr>
+                                <td width="50%" style="border-right: 1px solid #e0e0e0; padding-right: 15px;">
+                                  <div style="font-size: 11px; color: #999999; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; margin-bottom: 4px;">Número (nNF)</div>
+                                  <div style="font-size: 15px; color: #d40511; font-weight: 700;">${nNFSafe}</div>
+                                </td>
+                                <td width="50%" style="padding-left: 15px;">
+                                  <div style="font-size: 11px; color: #999999; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; margin-bottom: 4px;">CNPJ</div>
+                                  <div style="font-size: 15px; color: #1a1a1a; font-weight: 700;">${cnpjSafe}</div>
+                                </td>
+                              </tr>
+                            </table>
                           </td>
                         </tr>
                       </table>
@@ -127,26 +158,28 @@ export function buildXmlDivergenceEmailHtml(params: {
                   </tr>
                 </table>
 
-                <h3 style="margin: 0 0 15px 0; font-size: 14px; color: #d40511; text-transform: uppercase; letter-spacing: 1px;">Erros Encontrados:</h3>
-                <ul style="margin: 0 0 30px 0; padding-left: 20px; font-size: 14px; line-height: 1.6;">
+                <h3 style="margin: 0 0 15px 0; font-size: 13px; color: #d40511; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; border-bottom: 2px solid #ffcc00; display: inline-block; padding-bottom: 2px;">Divergências Encontradas</h3>
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 35px;">
                   ${errorsHtml}
-                </ul>
+                </table>
 
+                <!-- CTA Button -->
                 ${appUrlSafe ? `
                 <table border="0" cellpadding="0" cellspacing="0" width="100%">
                   <tr>
-                    <td align="center" style="padding: 10px 0 30px 0;">
-                      <a href="${appUrlSafe}" target="_blank" style="background-color: #d40511; color: #ffffff; padding: 14px 28px; text-decoration: none; font-size: 13px; font-weight: 800; border-radius: 4px; display: inline-block; text-transform: uppercase; letter-spacing: 1px;">Ver no Validador</a>
+                    <td align="center" style="padding-bottom: 35px;">
+                      <a href="${appUrlSafe}" target="_blank" style="background-color: #d40511; color: #ffffff; padding: 16px 32px; text-decoration: none; font-size: 14px; font-weight: 900; border-radius: 6px; display: inline-block; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 6px rgba(212, 5, 17, 0.2);">Acessar Validador</a>
                     </td>
                   </tr>
                 </table>
                 ` : ''}
 
-                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fff8f8; border-radius: 6px; border-left: 4px solid #d40511;">
+                <!-- Notice Box -->
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fff9f9; border-radius: 8px; border-left: 4px solid #d40511;">
                   <tr>
                     <td style="padding: 20px;">
-                      <p style="margin: 0; font-size: 13px; color: #666666; line-height: 1.4;">
-                        <strong>Ação Necessária:</strong> Por favor, verifique o arquivo original e realize as correções necessárias para prosseguir com o fluxo logístico.
+                      <p style="margin: 0; font-size: 13px; color: #666666; line-height: 1.5;">
+                        <strong style="color: #d40511;">Ação Necessária:</strong> Este arquivo não pôde ser processado automaticamente devido aos erros listados acima. Por favor, verifique e reenvie após a correção.
                       </p>
                     </td>
                   </tr>
@@ -154,13 +187,14 @@ export function buildXmlDivergenceEmailHtml(params: {
               </td>
             </tr>
 
+            <!-- Footer -->
             <tr>
-              <td style="padding: 0 40px 40px 40px;">
-                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px solid #eeeeee; padding-top: 25px;">
+              <td style="padding: 0 40px 40px 40px;" class="content">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px solid #eeeeee; padding-top: 30px;">
                   <tr>
                     <td align="center">
-                      <p style="margin: 0; font-size: 11px; color: #aaaaaa; text-transform: uppercase; letter-spacing: 1px;">DHL XML Validator • Sistema de Qualidade</p>
-                      <p style="margin: 10px 0 0 0; font-size: 11px; color:#bdbdbd;">© ${year} DHL Logistics. Todos os direitos reservados.</p>
+                      <p style="margin: 0; font-size: 11px; color: #999999; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">DHL Logistics • XML Validation System</p>
+                      <p style="margin: 12px 0 0 0; font-size: 11px; color: #cccccc;">© ${year} DHL. Todos os direitos reservados.</p>
                     </td>
                   </tr>
                 </table>
@@ -198,31 +232,36 @@ export function buildBatchXmlDivergenceEmailHtml(params: {
     const nNFSafe = escapeHtml(res.nNF || 'N/A');
     const cnpjSafe = escapeHtml(res.cnpj || 'N/A');
     const errorsHtml = res.errors.map(err => 
-      `<li style="margin-bottom: 4px; color: #d40511;">${escapeHtml(err)}</li>`
+      `<tr style="border-bottom: 1px dotted #f0f0f0;">
+        <td style="padding: 6px 0; vertical-align: top; width: 15px; color: #d40511; font-size: 12px;">•</td>
+        <td style="padding: 6px 0; font-size: 13px; color: #555555; line-height: 1.4;">${escapeHtml(err)}</td>
+      </tr>`
     ).join('');
 
     return `
-    <div style="margin-bottom: 30px; padding: 20px; background-color: #f9f9f9; border-radius: 8px; border: 1px solid #eeeeee;">
-      <p style="margin: 0 0 5px 0; font-size: 11px; color:#777777; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">Arquivo</p>
-      <p style="margin: 0 0 15px 0; font-size: 15px; color:#111111; font-weight: bold;">${fileNameSafe}</p>
-      
-      <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 15px;">
-        <tr>
-          <td width="50%">
-            <p style="margin: 0 0 5px 0; font-size: 11px; color:#777777; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">nNF</p>
-            <p style="margin: 0; font-size: 14px; color:#d40511; font-weight: bold;">${nNFSafe}</p>
-          </td>
-          <td width="50%">
-            <p style="margin: 0 0 5px 0; font-size: 11px; color:#777777; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">CNPJ</p>
-            <p style="margin: 0; font-size: 14px; color:#111111; font-weight: bold;">${cnpjSafe}</p>
-          </td>
-        </tr>
-      </table>
-
-      <p style="margin: 0 0 8px 0; font-size: 11px; color:#d40511; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">Divergências:</p>
-      <ul style="margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.5;">
-        ${errorsHtml}
-      </ul>
+    <div style="margin-bottom: 25px; background-color: #ffffff; border-radius: 8px; border: 1px solid #e0e0e0; overflow: hidden;">
+      <div style="background-color: #fcfcfc; padding: 15px 20px; border-bottom: 1px solid #f0f0f0;">
+        <div style="font-size: 10px; color: #999999; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; margin-bottom: 2px;">Arquivo</div>
+        <div style="font-size: 14px; color: #1a1a1a; font-weight: 700; word-break: break-all;">${fileNameSafe}</div>
+      </div>
+      <div style="padding: 15px 20px;">
+        <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 15px;">
+          <tr>
+            <td width="50%">
+              <div style="font-size: 10px; color: #999999; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; margin-bottom: 2px;">nNF</div>
+              <div style="font-size: 13px; color: #d40511; font-weight: 700;">${nNFSafe}</div>
+            </td>
+            <td width="50%">
+              <div style="font-size: 10px; color: #999999; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; margin-bottom: 2px;">CNPJ</div>
+              <div style="font-size: 13px; color: #1a1a1a; font-weight: 700;">${cnpjSafe}</div>
+            </td>
+          </tr>
+        </table>
+        <div style="font-size: 10px; color: #d40511; text-transform: uppercase; font-weight: 800; letter-spacing: 1px; margin-bottom: 8px;">Divergências</div>
+        <table border="0" cellpadding="0" cellspacing="0" width="100%">
+          ${errorsHtml}
+        </table>
+      </div>
     </div>
     `;
   }).join('');
@@ -233,49 +272,70 @@ export function buildBatchXmlDivergenceEmailHtml(params: {
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <title>Relatório de Divergências em Lote - ${appName}</title>
+    <style>
+      @media only screen and (max-width: 620px) {
+        .container { width: 100% !important; border-radius: 0 !important; }
+        .content { padding: 20px !important; }
+      }
+    </style>
   </head>
-  <body style="margin: 0; padding: 0; background-color: #f4f4f4; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;">
-    <table border="0" cellpadding="0" cellspacing="0" width="100%">
+  <body style="margin: 0; padding: 0; background-color: #f6f6f6; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+    <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f6f6f6;">
       <tr>
-        <td align="center" style="padding: 40px 0;">
-          <table border="0" cellpadding="0" cellspacing="0" width="650" style="background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-
+        <td align="center" style="padding: 30px 10px;">
+          <table border="0" cellpadding="0" cellspacing="0" width="600" class="container" style="background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e0e0e0;">
+            
+            <!-- DHL Top Bar -->
             <tr>
-              <td height="6" style="background-color: #ffcc00; line-height: 6px; font-size: 6px;">&nbsp;</td>
+              <td height="8" style="background-color: #ffcc00; font-size: 1px; line-height: 8px;">&nbsp;</td>
             </tr>
 
+            <!-- Header -->
             <tr>
-              <td style="background-color: #d40511; padding: 30px 40px;">
-                <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Relatório de Divergências</h1>
-                <p style="margin: 8px 0 0 0; color: #ffe7ea; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;">${appName} • Processamento em Lote</p>
+              <td style="background-color: #d40511; padding: 35px 40px;" class="content">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%">
+                  <tr>
+                    <td>
+                      <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 900; text-transform: uppercase; letter-spacing: -0.5px; line-height: 1.2;">Relatório <br>em Lote</h1>
+                    </td>
+                    <td align="right" style="vertical-align: middle;">
+                      <div style="background-color: #ffffff; color: #d40511; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 1px;">XML Validator</div>
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
 
+            <!-- Main Content -->
             <tr>
-              <td style="padding: 40px;">
-                <p style="margin: 0 0 18px 0; font-size: 16px; color: #333333; font-weight: bold;">Olá Equipe de Logística,</p>
-                <p style="margin: 0 0 25px 0; font-size: 15px; color: #555555; line-height: 1.6;">
-                  Foram identificadas divergências em <strong>${params.results.length}</strong> arquivos XML durante a validação em lote. Veja os detalhes abaixo:
+              <td style="padding: 40px;" class="content">
+                <p style="margin: 0 0 20px 0; font-size: 16px; color: #1a1a1a; font-weight: 700;">Olá Equipe,</p>
+                <p style="margin: 0 0 30px 0; font-size: 15px; color: #555555; line-height: 1.6;">
+                  Foram identificadas divergências em <strong>${params.results.length}</strong> arquivos durante o processamento em lote. Veja os detalhes abaixo:
                 </p>
 
+                <!-- Results List -->
                 ${resultsHtml}
 
+                <!-- CTA Button -->
                 ${appUrlSafe ? `
                 <table border="0" cellpadding="0" cellspacing="0" width="100%">
                   <tr>
-                    <td align="center" style="padding: 10px 0 30px 0;">
-                      <a href="${appUrlSafe}" target="_blank" style="background-color: #d40511; color: #ffffff; padding: 14px 28px; text-decoration: none; font-size: 13px; font-weight: 800; border-radius: 4px; display: inline-block; text-transform: uppercase; letter-spacing: 1px;">Acessar Validador</a>
+                    <td align="center" style="padding: 10px 0 35px 0;">
+                      <a href="${appUrlSafe}" target="_blank" style="background-color: #d40511; color: #ffffff; padding: 16px 32px; text-decoration: none; font-size: 14px; font-weight: 900; border-radius: 6px; display: inline-block; text-transform: uppercase; letter-spacing: 1px; box-shadow: 0 4px 6px rgba(212, 5, 17, 0.2);">Acessar Validador</a>
                     </td>
                   </tr>
                 </table>
                 ` : ''}
 
-                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f9f9f9; border-radius: 6px; border-left: 4px solid #ffcc00;">
+                <!-- Notice Box -->
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fcfcfc; border-radius: 8px; border-left: 4px solid #ffcc00;">
                   <tr>
                     <td style="padding: 20px;">
-                      <p style="margin: 0; font-size: 13px; color: #666666; line-height: 1.4;">
-                        <strong>Nota:</strong> Este é um relatório consolidado. Verifique cada arquivo individualmente para correções.
+                      <p style="margin: 0; font-size: 13px; color: #666666; line-height: 1.5;">
+                        <strong>Nota:</strong> Este é um relatório consolidado. Cada arquivo deve ser revisado individualmente no sistema.
                       </p>
                     </td>
                   </tr>
@@ -283,13 +343,14 @@ export function buildBatchXmlDivergenceEmailHtml(params: {
               </td>
             </tr>
 
+            <!-- Footer -->
             <tr>
-              <td style="padding: 0 40px 40px 40px;">
-                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px solid #eeeeee; padding-top: 25px;">
+              <td style="padding: 0 40px 40px 40px;" class="content">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="border-top: 1px solid #eeeeee; padding-top: 30px;">
                   <tr>
                     <td align="center">
-                      <p style="margin: 0; font-size: 11px; color: #aaaaaa; text-transform: uppercase; letter-spacing: 1px;">DHL XML Validator • Sistema de Qualidade</p>
-                      <p style="margin: 10px 0 0 0; font-size: 11px; color:#bdbdbd;">© ${year} DHL Logistics. Todos os direitos reservados.</p>
+                      <p style="margin: 0; font-size: 11px; color: #999999; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">DHL Logistics • XML Validation System</p>
+                      <p style="margin: 12px 0 0 0; font-size: 11px; color: #cccccc;">© ${year} DHL. Todos os direitos reservados.</p>
                     </td>
                   </tr>
                 </table>
