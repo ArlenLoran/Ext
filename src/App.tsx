@@ -121,28 +121,6 @@ export default function App() {
     });
   };
 
-  const handleConfirmSharePointValidation = async (result: ValidationResult, index: number) => {
-    if (!result.sharepointUrl) return;
-    
-    setSendingEmailIdx(index);
-    try {
-      const newUrl = await renameXmlFileAsValidated(result.sharepointUrl);
-      setNotification({ type: 'success', message: 'Arquivo validado e renomeado no SharePoint!' });
-      
-      setResults(prev => {
-        const updated = [...prev];
-        updated[index] = { ...updated[index], sent: true, sharepointUrl: newUrl };
-        return updated;
-      });
-    } catch (error) {
-      console.error(error);
-      setNotification({ type: 'error', message: 'Falha ao renomear no SharePoint.' });
-    } finally {
-      setSendingEmailIdx(null);
-      setTimeout(() => setNotification(null), 5000);
-    }
-  };
-
   const handleSendReport = async (result: ValidationResult, index: number) => {
     if (recipients.length === 0) {
       setNotification({ type: 'error', message: 'Nenhum destinatário cadastrado.' });
@@ -169,18 +147,9 @@ export default function App() {
       setNotification({ type: 'success', message: `Relatório enviado para ${recipients.length} destinatário(s)!` });
       
       // Mark as sent
-      let newSpUrl = result.sharepointUrl;
-      if (result.sharepointUrl) {
-        try {
-          newSpUrl = await renameXmlFileAsValidated(result.sharepointUrl);
-        } catch (spError) {
-          console.error("Erro ao renomear no SharePoint após envio:", spError);
-        }
-      }
-
       setResults(prev => {
         const updated = [...prev];
-        updated[index] = { ...updated[index], sent: true, sharepointUrl: newSpUrl };
+        updated[index] = { ...updated[index], sent: true };
         return updated;
       });
     } catch (error) {
@@ -228,22 +197,7 @@ export default function App() {
       setNotification({ type: 'success', message: `Relatório de lote enviado para ${recipients.length} destinatário(s)!` });
       
       // Mark all results with errors as sent
-      const updatedResults = await Promise.all(results.map(async (r) => {
-        if (r.errors.length > 0 && !r.sent) {
-          let newSpUrl = r.sharepointUrl;
-          if (r.sharepointUrl) {
-            try {
-              newSpUrl = await renameXmlFileAsValidated(r.sharepointUrl);
-            } catch (spError) {
-              console.error("Erro ao renomear no SharePoint (lote):", spError);
-            }
-          }
-          return { ...r, sent: true, sharepointUrl: newSpUrl };
-        }
-        return r;
-      }));
-      
-      setResults(updatedResults);
+      setResults(prev => prev.map(r => r.errors.length > 0 ? { ...r, sent: true } : r));
     } catch (error) {
       console.error(error);
       setNotification({ type: 'error', message: 'Falha ao enviar relatório em lote com anexos.' });
@@ -344,7 +298,25 @@ export default function App() {
       }, {} as Record<string, string>);
       
       await handleFiles(files, spUrlMap);
-      setNotification({ type: 'success', message: `${spFiles.length} arquivos importados do SharePoint com sucesso!` });
+      
+      // Automatically rename all imported files as "validated" in SharePoint
+      // so they don't appear in the next fetch.
+      // We do this in the background to not block the UI.
+      spFiles.forEach(async (spFile) => {
+        try {
+          const newUrl = await renameXmlFileAsValidated(spFile.serverRelativeUrl);
+          // Update the local state with the new URL for this file
+          setResults(prev => prev.map(r => 
+            r.fileName === spFile.name && r.sharepointUrl === spFile.serverRelativeUrl 
+            ? { ...r, sharepointUrl: newUrl, sent: true } // Mark as "sent" (validated)
+            : r
+          ));
+        } catch (err) {
+          console.error(`Erro ao renomear ${spFile.name}:`, err);
+        }
+      });
+
+      setNotification({ type: 'success', message: `${spFiles.length} arquivos importados e validados no SharePoint!` });
     } catch (error) {
       console.error(error);
       setNotification({ type: 'error', message: error instanceof Error ? error.message : 'Erro ao importar do SharePoint.' });
@@ -806,20 +778,7 @@ export default function App() {
                         <div className="flex flex-col items-center justify-center py-4 text-center">
                           <CheckCircle2 size={32} className="text-green-500 mb-2" />
                           <p className="text-sm font-bold text-green-700">Tudo em ordem!</p>
-                          {result.sharepointUrl && !result.sent && (
-                            <button
-                              onClick={() => handleConfirmSharePointValidation(result, idx)}
-                              disabled={sendingEmailIdx !== null}
-                              className="mt-4 w-full py-2 bg-green-600 text-white rounded-lg text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-green-700 transition-all shadow-md disabled:opacity-50"
-                            >
-                              {sendingEmailIdx === idx ? (
-                                <><Loader2 size={16} className="animate-spin" /> PROCESSANDO...</>
-                              ) : (
-                                <><CheckCircle2 size={16} /> CONFIRMAR NO SHAREPOINT</>
-                              )}
-                            </button>
-                          )}
-                          {result.sharepointUrl && result.sent && (
+                          {result.sharepointUrl && (
                              <p className="mt-2 text-[10px] text-green-600 font-bold uppercase">VALIDADO NO SHAREPOINT</p>
                           )}
                         </div>

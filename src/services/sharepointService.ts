@@ -103,7 +103,8 @@ export async function listXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'): Pr
 
   const data = await response.json();
   const files = (data?.d?.results || []) as Array<{ Name: string; ServerRelativeUrl: string }>;
-  const xmlFiles = files.filter((item) => /\.xml$/i.test(item.Name));
+  // Filter for .xml files and EXCLUDE those already marked as "validado"
+  const xmlFiles = files.filter((item) => /\.xml$/i.test(item.Name) && !/validado\.xml$/i.test(item.Name));
 
   const downloaded = await Promise.all(
     xmlFiles.map(async (item) => {
