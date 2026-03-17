@@ -15,7 +15,11 @@ export async function sendEmail(
   bodyEmail: string,
   attachments?: Attachment[]
 ): Promise<any> {
-  const emailsStr = Array.isArray(emails) ? emails.filter(Boolean).join(';') : String(emails || '');
+  // Power Automate (Outlook) requires semicolons (;) as separators for multiple emails.
+  // We join arrays with ; and also replace any commas in strings with ;
+  const emailsStr = Array.isArray(emails) 
+    ? emails.filter(Boolean).join(';') 
+    : String(emails || '').replace(/,/g, ';');
 
   const data = {
     emails: emailsStr,

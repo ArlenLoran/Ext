@@ -16,7 +16,12 @@ import {
   Trash2,
   FileSearch,
   Mail,
-  Loader2
+  Loader2,
+  Settings,
+  Plus,
+  Edit2,
+  Save,
+  X
 } from 'lucide-react';
 import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtml } from './services/emailService';
 
@@ -40,6 +45,57 @@ export default function App() {
   const [sendingEmailIdx, setSendingEmailIdx] = useState<number | null>(null);
   const [isSendingBatch, setIsSendingBatch] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  
+  // Email management state
+  const [recipients, setRecipients] = useState<string[]>(() => {
+    const saved = localStorage.getItem('dhl_recipients');
+    return saved ? JSON.parse(saved) : ['Arlen.Oliveira@dhl.com'];
+  });
+  const [newEmail, setNewEmail] = useState('');
+  const [editingEmail, setEditingEmail] = useState<{ index: number, value: string } | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+
+  React.useEffect(() => {
+    localStorage.setItem('dhl_recipients', JSON.stringify(recipients));
+  }, [recipients]);
+
+  const addRecipient = (e: React.FormEvent) => {
+    e.preventDefault();
+    const email = newEmail.trim();
+    if (!email || !email.includes('@')) {
+      setNotification({ type: 'error', message: 'E-mail inválido.' });
+      return;
+    }
+    if (recipients.includes(email)) {
+      setNotification({ type: 'error', message: 'E-mail já cadastrado.' });
+      return;
+    }
+    setRecipients([...recipients, email]);
+    setNewEmail('');
+    setNotification({ type: 'success', message: 'E-mail adicionado com sucesso!' });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const removeRecipient = (index: number) => {
+    setRecipients(recipients.filter((_, i) => i !== index));
+  };
+
+  const startEdit = (index: number, value: string) => {
+    setEditingEmail({ index, value });
+  };
+
+  const saveEdit = () => {
+    if (!editingEmail) return;
+    const email = editingEmail.value.trim();
+    if (!email || !email.includes('@')) {
+      setNotification({ type: 'error', message: 'E-mail inválido.' });
+      return;
+    }
+    const updated = [...recipients];
+    updated[editingEmail.index] = email;
+    setRecipients(updated);
+    setEditingEmail(null);
+  };
 
   const toggleExpand = (index: number) => {
     setExpandedIndices(prev => 
@@ -61,6 +117,10 @@ export default function App() {
   };
 
   const handleSendReport = async (result: ValidationResult, index: number) => {
+    if (recipients.length === 0) {
+      setNotification({ type: 'error', message: 'Nenhum destinatário cadastrado.' });
+      return;
+    }
     setSendingEmailIdx(index);
     try {
       const html = buildXmlDivergenceEmailHtml({
@@ -76,9 +136,10 @@ export default function App() {
         ContentBytes: await fileToBase64(result.originalFile)
       }];
 
-      await sendEmail('Arlen.Oliveira@dhl.com', `Divergência XML: ${result.fileName}`, html, attachments);
+      // Pass the array directly to let the service handle the separator (semicolon)
+      await sendEmail(recipients, `Divergência XML: ${result.fileName}`, html, attachments);
       
-      setNotification({ type: 'success', message: 'Relatório com anexo enviado com sucesso!' });
+      setNotification({ type: 'success', message: `Relatório enviado para ${recipients.length} destinatário(s)!` });
     } catch (error) {
       console.error(error);
       setNotification({ type: 'error', message: 'Falha ao enviar relatório com anexo.' });
@@ -89,6 +150,10 @@ export default function App() {
   };
 
   const handleSendBatchReport = async () => {
+    if (recipients.length === 0) {
+      setNotification({ type: 'error', message: 'Nenhum destinatário cadastrado.' });
+      return;
+    }
     const resultsWithErrors = results.filter(r => r.errors.length > 0);
     if (resultsWithErrors.length === 0) return;
 
@@ -109,14 +174,15 @@ export default function App() {
         ContentBytes: await fileToBase64(r.originalFile)
       })));
 
+      // Pass the array directly to let the service handle the separator (semicolon)
       await sendEmail(
-        'Arlen.Oliveira@dhl.com', 
+        recipients, 
         `Relatório de Divergências em Lote (${resultsWithErrors.length} arquivos)`, 
         html,
         attachments
       );
       
-      setNotification({ type: 'success', message: `Relatório de lote com ${resultsWithErrors.length} anexos enviado!` });
+      setNotification({ type: 'success', message: `Relatório de lote enviado para ${recipients.length} destinatário(s)!` });
     } catch (error) {
       console.error(error);
       setNotification({ type: 'error', message: 'Falha ao enviar relatório em lote com anexos.' });
@@ -277,6 +343,12 @@ export default function App() {
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <h2 className="text-3xl font-bold tracking-tight text-dhl-dark">Validação de Notas Fiscais</h2>
             <div className="flex flex-wrap items-center gap-3">
+              <button 
+                onClick={() => setShowSettings(!showSettings)}
+                className="bg-white text-dhl-dark border border-gray-200 px-4 py-2 rounded-md transition-all flex items-center gap-2 font-bold text-sm shadow-sm hover:bg-gray-50"
+              >
+                <Settings size={16} /> DESTINATÁRIOS
+              </button>
               {results.some(r => r.errors.length > 0) && (
                 <button 
                   onClick={handleSendBatchReport}
@@ -300,6 +372,90 @@ export default function App() {
               )}
             </div>
           </div>
+
+          <AnimatePresence>
+            {showSettings && (
+              <motion.div 
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-dhl-dark flex items-center gap-2">
+                      <Mail size={20} className="text-dhl-red" /> Gerenciar Destinatários
+                    </h3>
+                    <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">
+                      <X size={20} />
+                    </button>
+                  </div>
+                  
+                  <form onSubmit={addRecipient} className="flex gap-2">
+                    <input 
+                      type="email" 
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                      placeholder="Novo e-mail de destino..."
+                      className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-dhl-red/20 focus:border-dhl-red"
+                    />
+                    <button 
+                      type="submit"
+                      className="bg-dhl-dark text-white px-4 py-2 rounded-md font-bold text-sm flex items-center gap-2 hover:bg-black transition-colors"
+                    >
+                      <Plus size={16} /> ADICIONAR
+                    </button>
+                  </form>
+
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
+                    {recipients.length === 0 ? (
+                      <p className="text-sm text-gray-500 italic">Nenhum e-mail cadastrado. O sistema não poderá enviar relatórios.</p>
+                    ) : (
+                      recipients.map((email, idx) => (
+                        <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg group">
+                          {editingEmail?.index === idx ? (
+                            <div className="flex-1 flex gap-2">
+                              <input 
+                                type="email" 
+                                value={editingEmail.value}
+                                onChange={(e) => setEditingEmail({ ...editingEmail, value: e.target.value })}
+                                className="flex-1 px-2 py-1 border border-gray-300 rounded focus:outline-none"
+                                autoFocus
+                              />
+                              <button onClick={saveEdit} className="text-green-600 hover:text-green-700">
+                                <Save size={18} />
+                              </button>
+                              <button onClick={() => setEditingEmail(null)} className="text-gray-400 hover:text-gray-600">
+                                <X size={18} />
+                              </button>
+                            </div>
+                          ) : (
+                            <>
+                              <span className="text-sm font-medium text-gray-700">{email}</span>
+                              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                  onClick={() => startEdit(idx, email)}
+                                  className="text-blue-600 hover:text-blue-700 p-1"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                                <button 
+                                  onClick={() => removeRecipient(idx)}
+                                  className="text-dhl-red hover:text-red-700 p-1"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <motion.div 
             onDrop={onDrop}
