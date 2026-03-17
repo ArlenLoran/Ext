@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+@theme {
+  --color-dhl-yellow: #FFCC00;
+  --color-dhl-red: #D40511;
+  --color-dhl-dark: #1D1D1B;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background-color: #f4f4f4;
+  color: var(--color-dhl-dark);
+}
+
+.dhl-gradient {
+  background: linear-gradient(135deg, #FFCC00 0%, #FFD633 100%);
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+}

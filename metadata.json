@@ -1,0 +1,5 @@
+{
+  "name": "DHL XML Validator",
+  "description": "Sistema profissional de validação de arquivos XML de NFe com padrão visual DHL.",
+  "requestFramePermissions": []
+}
