@@ -14,8 +14,11 @@ import {
   ChevronDown, 
   ChevronUp,
   Trash2,
-  FileSearch
+  FileSearch,
+  Mail,
+  Loader2
 } from 'lucide-react';
+import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtml } from './services/emailService';
 
 interface ValidationResult {
   fileName: string;
@@ -27,17 +30,100 @@ interface ValidationResult {
   errors: string[];
   rawContent: string;
   allFields: { key: string; value: string }[];
+  originalFile: File;
 }
 
 export default function App() {
   const [results, setResults] = useState<ValidationResult[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [expandedIndices, setExpandedIndices] = useState<number[]>([]);
+  const [sendingEmailIdx, setSendingEmailIdx] = useState<number | null>(null);
+  const [isSendingBatch, setIsSendingBatch] = useState(false);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
   const toggleExpand = (index: number) => {
     setExpandedIndices(prev => 
       prev.includes(index) ? prev.filter(i => i !== index) : [...prev, index]
     );
+  };
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(",")[1];
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error("Erro ao converter arquivo para base64"));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleSendReport = async (result: ValidationResult, index: number) => {
+    setSendingEmailIdx(index);
+    try {
+      const html = buildXmlDivergenceEmailHtml({
+        fileName: result.fileName,
+        nNF: result.nNF,
+        cnpj: result.cnpj,
+        errors: result.errors,
+        appUrl: window.location.href
+      });
+
+      const attachments = [{
+        Name: result.fileName,
+        ContentBytes: await fileToBase64(result.originalFile)
+      }];
+
+      await sendEmail('Arlen.Oliveira@dhl.com', `Divergência XML: ${result.fileName}`, html, attachments);
+      
+      setNotification({ type: 'success', message: 'Relatório com anexo enviado com sucesso!' });
+    } catch (error) {
+      console.error(error);
+      setNotification({ type: 'error', message: 'Falha ao enviar relatório com anexo.' });
+    } finally {
+      setSendingEmailIdx(null);
+      setTimeout(() => setNotification(null), 5000);
+    }
+  };
+
+  const handleSendBatchReport = async () => {
+    const resultsWithErrors = results.filter(r => r.errors.length > 0);
+    if (resultsWithErrors.length === 0) return;
+
+    setIsSendingBatch(true);
+    try {
+      const html = buildBatchXmlDivergenceEmailHtml({
+        results: resultsWithErrors.map(r => ({
+          fileName: r.fileName,
+          nNF: r.nNF,
+          cnpj: r.cnpj,
+          errors: r.errors
+        })),
+        appUrl: window.location.href
+      });
+
+      const attachments = await Promise.all(resultsWithErrors.map(async (r) => ({
+        Name: r.fileName,
+        ContentBytes: await fileToBase64(r.originalFile)
+      })));
+
+      await sendEmail(
+        'Arlen.Oliveira@dhl.com', 
+        `Relatório de Divergências em Lote (${resultsWithErrors.length} arquivos)`, 
+        html,
+        attachments
+      );
+      
+      setNotification({ type: 'success', message: `Relatório de lote com ${resultsWithErrors.length} anexos enviado!` });
+    } catch (error) {
+      console.error(error);
+      setNotification({ type: 'error', message: 'Falha ao enviar relatório em lote com anexos.' });
+    } finally {
+      setIsSendingBatch(false);
+      setTimeout(() => setNotification(null), 5000);
+    }
   };
 
   const validateXML = async (file: File): Promise<ValidationResult> => {
@@ -107,7 +193,8 @@ export default function App() {
       isValid: errors.length === 0,
       errors,
       rawContent: text,
-      allFields
+      allFields,
+      originalFile: file
     };
   };
 
@@ -165,18 +252,53 @@ export default function App() {
       </header>
 
       <main className="max-w-6xl mx-auto p-6 space-y-8">
+        {/* Notification Toast */}
+        <AnimatePresence>
+          {notification && (
+            <motion.div
+              initial={{ opacity: 0, y: -50 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className={`fixed top-24 right-6 z-[100] p-4 rounded-lg shadow-2xl flex items-center gap-3 border-l-4 ${
+                notification.type === 'success' ? 'bg-white border-green-500 text-green-800' : 'bg-white border-red-500 text-red-800'
+              }`}
+            >
+              {notification.type === 'success' ? <CheckCircle2 className="text-green-500" /> : <XCircle className="text-red-500" />}
+              <p className="font-bold text-sm">{notification.message}</p>
+              <button onClick={() => setNotification(null)} className="ml-4 opacity-50 hover:opacity-100">
+                <Trash2 size={14} />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Hero / Upload Section */}
         <section className="space-y-4">
-          <div className="flex items-end justify-between">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
             <h2 className="text-3xl font-bold tracking-tight text-dhl-dark">Validação de Notas Fiscais</h2>
-            {results.length > 0 && (
-              <button 
-                onClick={clearAll}
-                className="text-dhl-red hover:bg-dhl-red/10 px-4 py-2 rounded-md transition-colors flex items-center gap-2 font-bold text-sm"
-              >
-                <Trash2 size={16} /> LIMPAR TUDO
-              </button>
-            )}
+            <div className="flex flex-wrap items-center gap-3">
+              {results.some(r => r.errors.length > 0) && (
+                <button 
+                  onClick={handleSendBatchReport}
+                  disabled={isSendingBatch}
+                  className="bg-dhl-red text-white px-4 py-2 rounded-md transition-all flex items-center gap-2 font-bold text-sm shadow-md hover:bg-red-700 disabled:opacity-50"
+                >
+                  {isSendingBatch ? (
+                    <><Loader2 size={16} className="animate-spin" /> ENVIANDO LOTE...</>
+                  ) : (
+                    <><Mail size={16} /> REPORTAR TODAS AS DIVERGÊNCIAS</>
+                  )}
+                </button>
+              )}
+              {results.length > 0 && (
+                <button 
+                  onClick={clearAll}
+                  className="text-dhl-red hover:bg-dhl-red/10 px-4 py-2 rounded-md transition-colors flex items-center gap-2 font-bold text-sm"
+                >
+                  <Trash2 size={16} /> LIMPAR TUDO
+                </button>
+              )}
+            </div>
           </div>
 
           <motion.div 
@@ -303,14 +425,28 @@ export default function App() {
                         <AlertCircle size={14} className="text-dhl-red" /> Log de Validação
                       </h4>
                       {result.errors.length > 0 ? (
-                        <ul className="space-y-3">
-                          {result.errors.map((err, i) => (
-                            <li key={i} className="text-xs text-red-600 flex gap-2 items-start">
-                              <span className="mt-1 block w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
-                              {err}
-                            </li>
-                          ))}
-                        </ul>
+                        <div className="space-y-4">
+                          <ul className="space-y-3">
+                            {result.errors.map((err, i) => (
+                              <li key={i} className="text-xs text-red-600 flex gap-2 items-start">
+                                <span className="mt-1 block w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                                {err}
+                              </li>
+                            ))}
+                          </ul>
+                          
+                          <button
+                            onClick={() => handleSendReport(result, idx)}
+                            disabled={sendingEmailIdx !== null}
+                            className="w-full py-2 bg-dhl-red text-white rounded-lg text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-red-700 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {sendingEmailIdx === idx ? (
+                              <><Loader2 size={16} className="animate-spin" /> ENVIANDO...</>
+                            ) : (
+                              <><Mail size={16} /> REPORTAR DIVERGÊNCIA</>
+                            )}
+                          </button>
+                        </div>
                       ) : (
                         <div className="flex flex-col items-center justify-center py-4 text-center">
                           <CheckCircle2 size={32} className="text-green-500 mb-2" />
