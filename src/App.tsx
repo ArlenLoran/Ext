@@ -40,6 +40,7 @@ interface ValidationResult {
   sent: boolean;
   ntvStatus?: 'loading' | 'registered' | 'not_registered' | 'error';
   sharepointUrl?: string;
+  spValidated?: boolean;
 }
 
 export default function App() {
@@ -308,7 +309,7 @@ export default function App() {
           // Update the local state with the new URL for this file
           setResults(prev => prev.map(r => 
             r.fileName === spFile.name && r.sharepointUrl === spFile.serverRelativeUrl 
-            ? { ...r, sharepointUrl: newUrl, sent: true } // Mark as "sent" (validated)
+            ? { ...r, sharepointUrl: newUrl, spValidated: true } 
             : r
           ));
         } catch (err) {
@@ -760,6 +761,10 @@ export default function App() {
                             ))}
                           </ul>
                           
+                          {result.spValidated && (
+                             <p className="text-[10px] text-green-600 font-bold uppercase mb-2">VALIDADO NO SHAREPOINT</p>
+                          )}
+
                           <button
                             onClick={() => handleSendReport(result, idx)}
                             disabled={sendingEmailIdx !== null || result.sent}
@@ -778,7 +783,7 @@ export default function App() {
                         <div className="flex flex-col items-center justify-center py-4 text-center">
                           <CheckCircle2 size={32} className="text-green-500 mb-2" />
                           <p className="text-sm font-bold text-green-700">Tudo em ordem!</p>
-                          {result.sharepointUrl && (
+                          {result.spValidated && (
                              <p className="mt-2 text-[10px] text-green-600 font-bold uppercase">VALIDADO NO SHAREPOINT</p>
                           )}
                         </div>
