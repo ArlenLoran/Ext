@@ -134,6 +134,8 @@ export default function App() {
   const [showSpManager, setShowSpManager] = useState(false);
   const [spManagerSearch, setSpManagerSearch] = useState('');
   const [spManagerPage, setSpManagerPage] = useState(1);
+  const [spManagerStartDate, setSpManagerStartDate] = useState('');
+  const [spManagerEndDate, setSpManagerEndDate] = useState('');
 
   // Validation Rules State
   const [mandatoryTags, setMandatoryTags] = useState<{ name: string, tag: string }[]>(() => {
@@ -2193,12 +2195,60 @@ export default function App() {
                     className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-2xl focus:outline-none focus:ring-4 focus:ring-dhl-red/5 transition-all font-medium"
                   />
                 </div>
+                
+                <div className="flex items-center gap-2 w-full md:w-auto">
+                  <div className="relative flex-1 md:w-40">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                    <input 
+                      type="date"
+                      value={spManagerStartDate}
+                      onChange={(e) => { setSpManagerStartDate(e.target.value); setSpManagerPage(1); }}
+                      className="w-full pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-dhl-red/10"
+                      title="Data inicial"
+                    />
+                  </div>
+                  <span className="text-gray-400 font-bold">/</span>
+                  <div className="relative flex-1 md:w-40">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
+                    <input 
+                      type="date"
+                      value={spManagerEndDate}
+                      onChange={(e) => { setSpManagerEndDate(e.target.value); setSpManagerPage(1); }}
+                      className="w-full pl-9 pr-3 py-2 bg-white border border-gray-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-dhl-red/10"
+                      title="Data final"
+                    />
+                  </div>
+                  {(spManagerStartDate || spManagerEndDate) && (
+                    <button 
+                      onClick={() => { setSpManagerStartDate(''); setSpManagerEndDate(''); setSpManagerPage(1); }}
+                      className="p-2 text-gray-400 hover:text-dhl-red transition-colors"
+                      title="Limpar datas"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
               </div>
 
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {spFilesList
                     .filter(file => {
+                      // Date Range Filter
+                      if (spManagerStartDate) {
+                        const fileDate = new Date(file.timeCreated);
+                        const startDate = new Date(spManagerStartDate);
+                        startDate.setHours(0, 0, 0, 0);
+                        if (fileDate < startDate) return false;
+                      }
+                      
+                      if (spManagerEndDate) {
+                        const fileDate = new Date(file.timeCreated);
+                        const endDate = new Date(spManagerEndDate);
+                        endDate.setHours(23, 59, 59, 999);
+                        if (fileDate > endDate) return false;
+                      }
+
                       const search = spManagerSearch.toLowerCase();
                       if (!search) return true;
                       return (
@@ -2282,6 +2332,21 @@ export default function App() {
                     ))}
                   
                   {spFilesList.filter(file => {
+                    // Date Range Filter
+                    if (spManagerStartDate) {
+                      const fileDate = new Date(file.timeCreated);
+                      const startDate = new Date(spManagerStartDate);
+                      startDate.setHours(0, 0, 0, 0);
+                      if (fileDate < startDate) return false;
+                    }
+                    
+                    if (spManagerEndDate) {
+                      const fileDate = new Date(file.timeCreated);
+                      const endDate = new Date(spManagerEndDate);
+                      endDate.setHours(23, 59, 59, 999);
+                      if (fileDate > endDate) return false;
+                    }
+
                     const search = spManagerSearch.toLowerCase();
                     if (!search) return true;
                     return (
@@ -2303,6 +2368,21 @@ export default function App() {
               <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 italic">
                   Mostrando {Math.min(spFilesList.filter(file => {
+                    // Date Range Filter
+                    if (spManagerStartDate) {
+                      const fileDate = new Date(file.timeCreated);
+                      const startDate = new Date(spManagerStartDate);
+                      startDate.setHours(0, 0, 0, 0);
+                      if (fileDate < startDate) return false;
+                    }
+                    
+                    if (spManagerEndDate) {
+                      const fileDate = new Date(file.timeCreated);
+                      const endDate = new Date(spManagerEndDate);
+                      endDate.setHours(23, 59, 59, 999);
+                      if (fileDate > endDate) return false;
+                    }
+
                     const search = spManagerSearch.toLowerCase();
                     if (!search) return true;
                     return (
@@ -2313,6 +2393,21 @@ export default function App() {
                       file.xProd?.toLowerCase().includes(search)
                     );
                   }).length, 12)} de {spFilesList.filter(file => {
+                    // Date Range Filter
+                    if (spManagerStartDate) {
+                      const fileDate = new Date(file.timeCreated);
+                      const startDate = new Date(spManagerStartDate);
+                      startDate.setHours(0, 0, 0, 0);
+                      if (fileDate < startDate) return false;
+                    }
+                    
+                    if (spManagerEndDate) {
+                      const fileDate = new Date(file.timeCreated);
+                      const endDate = new Date(spManagerEndDate);
+                      endDate.setHours(23, 59, 59, 999);
+                      if (fileDate > endDate) return false;
+                    }
+
                     const search = spManagerSearch.toLowerCase();
                     if (!search) return true;
                     return (
@@ -2338,6 +2433,21 @@ export default function App() {
                   <button 
                     onClick={() => setSpManagerPage(prev => prev + 1)}
                     disabled={spManagerPage * 12 >= spFilesList.filter(file => {
+                      // Date Range Filter
+                      if (spManagerStartDate) {
+                        const fileDate = new Date(file.timeCreated);
+                        const startDate = new Date(spManagerStartDate);
+                        startDate.setHours(0, 0, 0, 0);
+                        if (fileDate < startDate) return false;
+                      }
+                      
+                      if (spManagerEndDate) {
+                        const fileDate = new Date(file.timeCreated);
+                        const endDate = new Date(spManagerEndDate);
+                        endDate.setHours(23, 59, 59, 999);
+                        if (fileDate > endDate) return false;
+                      }
+
                       const search = spManagerSearch.toLowerCase();
                       if (!search) return true;
                       return (
