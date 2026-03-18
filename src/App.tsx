@@ -788,22 +788,25 @@ export default function App() {
     // Log to Full History if SharePoint is initialized
     if (isSpInitialized) {
       const userInfo = SharePointListsService.getUserInfo();
-      newResults.forEach(async (res) => {
+      
+      // Use Promise.all to ensure all items are created before refreshing the list
+      Promise.all(newResults.map(async (res) => {
         try {
           await SharePointListsService.createItem('DHL_FullHistory', {
             Title: res.fileName,
             Status: res.isValid ? 'Válido' : 'Inválido',
             nNF: res.nNF || '',
             CNPJ: res.cnpj || '',
-            UserEmail: userInfo.email,
+            UserEmail: userInfo.email || 'Usuário Local',
             Source: res.sharepointUrl ? 'SharePoint' : 'Local',
             ValidationDate: new Date().toISOString()
           });
         } catch (err) {
           console.error('Erro ao logar no histórico completo:', err);
         }
+      })).then(() => {
+        loadFullHistoryFromSharePoint();
       });
-      loadFullHistoryFromSharePoint();
     }
 
     return newResults;
