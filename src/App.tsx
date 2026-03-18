@@ -26,10 +26,13 @@ import {
   ShieldAlert,
   Search,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  History,
+  RotateCcw,
+  Clock
 } from 'lucide-react';
 import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtml } from './services/emailService';
-import { listXmlFilesFromFolder, renameXmlFileAsValidated } from './services/sharepointService';
+import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation } from './services/sharepointService';
 import { SharePointListsService } from './services/sharepointLists';
 
 interface ValidationResult {
@@ -82,6 +85,13 @@ export default function App() {
   const [isSpInitialized, setIsSpInitialized] = useState(false);
   const [isInitializingSp, setIsInitializingSp] = useState(false);
 
+  // History State
+  const [history, setHistory] = useState<any[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [isFetchingHistory, setIsFetchingHistory] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyPage, setHistoryPage] = useState(1);
+
   // Validation Rules State
   const [mandatoryTags, setMandatoryTags] = useState<{ name: string, tag: string }[]>(() => {
     const saved = localStorage.getItem('dhl_mandatory_tags');
@@ -132,13 +142,31 @@ export default function App() {
       const recExists = await SharePointListsService.listExists('DHL_Recipients');
       const tagExists = await SharePointListsService.listExists('DHL_MandatoryTags');
       const patExists = await SharePointListsService.listExists('DHL_OSPatterns');
+      const histExists = await SharePointListsService.listExists('DHL_ValidationHistory');
       
-      if (recExists && tagExists && patExists) {
+      if (recExists && tagExists && patExists && histExists) {
         setIsSpInitialized(true);
         loadDataFromSharePoint();
+        loadHistoryFromSharePoint();
       }
     } catch (error) {
       console.error('Erro ao verificar inicialização do SharePoint:', error);
+    }
+  };
+
+  const loadHistoryFromSharePoint = async () => {
+    if (!SharePointListsService.isContextAvailable()) return;
+    setIsFetchingHistory(true);
+    try {
+      const items = await SharePointListsService.getItems('DHL_ValidationHistory', {
+        orderBy: 'Id desc',
+        top: 500
+      });
+      setHistory(items);
+    } catch (error) {
+      console.error('Erro ao carregar histórico:', error);
+    } finally {
+      setIsFetchingHistory(false);
     }
   };
 
@@ -185,6 +213,17 @@ export default function App() {
       // Ensure OS Patterns List
       await SharePointListsService.ensureList('DHL_OSPatterns', 'Padrões de regex para validação de OS', [
         { title: 'Title', type: 'Text', required: true } // Regex Pattern
+      ]);
+
+      // Ensure Validation History List
+      await SharePointListsService.ensureList('DHL_ValidationHistory', 'Histórico de validações de XML', [
+        { title: 'Title', type: 'Text', required: true }, // Filename
+        { title: 'Status', type: 'Text', required: true },
+        { title: 'nNF', type: 'Text' },
+        { title: 'CNPJ', type: 'Text' },
+        { title: 'ServerRelativeUrl', type: 'Text' },
+        { title: 'Errors', type: 'Note' },
+        { title: 'ValidationDate', type: 'DateTime' }
       ]);
 
       setIsSpInitialized(true);
@@ -589,14 +628,29 @@ export default function App() {
         return acc;
       }, {} as Record<string, string>);
       
-      await handleFiles(files, spUrlMap);
+      const newResults = await handleFiles(files, spUrlMap);
       
       // Automatically rename all imported files as "validated" in SharePoint
       // so they don't appear in the next fetch.
       // We do this in the background to not block the UI.
       spFiles.forEach(async (spFile) => {
         try {
+          const result = newResults.find(r => r.fileName === spFile.name);
           const newUrl = await renameXmlFileAsValidated(spFile.serverRelativeUrl);
+          
+          if (isSpInitialized) {
+            await SharePointListsService.createItem('DHL_ValidationHistory', {
+              Title: spFile.name,
+              Status: result?.isValid ? 'Validado' : 'Erro',
+              nNF: result?.nNF || '',
+              CNPJ: result?.cnpj || '',
+              ServerRelativeUrl: newUrl,
+              Errors: result?.errors.join('; ') || '',
+              ValidationDate: new Date().toISOString()
+            });
+            loadHistoryFromSharePoint();
+          }
+
           // Update the local state with the new URL for this file
           setResults(prev => prev.map(r => 
             r.fileName === spFile.name && r.sharepointUrl === spFile.serverRelativeUrl 
@@ -669,7 +723,7 @@ export default function App() {
     }
   };
 
-  const handleFiles = async (files: FileList | File[], spUrlMap?: Record<string, string>) => {
+  const handleFiles = async (files: FileList | File[], spUrlMap?: Record<string, string>): Promise<ValidationResult[]> => {
     const newResults: ValidationResult[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i] instanceof File ? (files[i] as File) : (files[i] as any);
@@ -692,6 +746,8 @@ export default function App() {
       });
       return combined;
     });
+
+    return newResults;
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -713,6 +769,29 @@ export default function App() {
 
   const removeResult = (index: number) => {
     setResults(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleRevertValidation = async (historyItem: any) => {
+    if (!isSpAvailable) return;
+    setIsFetchingHistory(true);
+    try {
+      // 1. Revert rename in SharePoint
+      await revertXmlFileValidation(historyItem.ServerRelativeUrl);
+      
+      // 2. Delete from history list
+      await SharePointListsService.deleteItem('DHL_ValidationHistory', historyItem.Id);
+      
+      setNotification({ type: 'success', message: `Validação do arquivo ${historyItem.Title} revertida com sucesso!` });
+      
+      // 3. Refresh history
+      loadHistoryFromSharePoint();
+    } catch (error) {
+      console.error(error);
+      setNotification({ type: 'error', message: 'Erro ao reverter validação.' });
+    } finally {
+      setIsFetchingHistory(false);
+      setTimeout(() => setNotification(null), 3000);
+    }
   };
 
   return (
@@ -786,6 +865,17 @@ export default function App() {
             <div className="flex flex-wrap items-center gap-2 md:gap-3">
               {/* Secondary Actions Group */}
               <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl p-1">
+                <button 
+                  onClick={() => setShowHistory(true)}
+                  className="p-2 text-gray-500 hover:bg-gray-200 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
+                  title="Histórico de Validações"
+                >
+                  <History size={16} />
+                  <span className="hidden sm:inline">Histórico</span>
+                </button>
+
+                <div className="w-px h-6 bg-gray-200 mx-1" />
+
                 <button 
                   onClick={() => setShowSettings(!showSettings)}
                   className={`p-2 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest ${showSettings ? 'bg-dhl-dark text-white' : 'text-gray-500 hover:bg-gray-200'}`}
@@ -1510,6 +1600,149 @@ export default function App() {
           )}
         </section>
       </main>
+      
+      {/* History Modal */}
+      <AnimatePresence>
+        {showHistory && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
+            >
+              <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                <div className="flex items-center gap-4">
+                  <div className="bg-dhl-dark p-3 rounded-2xl shadow-lg">
+                    <History className="text-dhl-yellow" size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-dhl-dark italic uppercase tracking-tighter leading-none">
+                      Histórico de Validações
+                    </h3>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">
+                      Registros persistidos no SharePoint
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowHistory(false)}
+                  className="p-2 hover:bg-gray-200 rounded-full transition-colors text-gray-400"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="p-6 bg-white border-b border-gray-100 flex flex-col md:row items-center gap-4">
+                <div className="relative flex-1 w-full">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input 
+                    type="text"
+                    placeholder="Buscar por arquivo, NF ou CNPJ..."
+                    value={historySearch}
+                    onChange={(e) => { setHistorySearch(e.target.value); setHistoryPage(1); }}
+                    className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium"
+                  />
+                </div>
+                <button 
+                  onClick={loadHistoryFromSharePoint}
+                  disabled={isFetchingHistory}
+                  className="px-4 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-600 transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest disabled:opacity-50"
+                >
+                  <RotateCcw size={16} className={isFetchingHistory ? 'animate-spin' : ''} />
+                  Atualizar
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6">
+                {isFetchingHistory && history.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+                    <Loader2 size={48} className="animate-spin mb-4 opacity-20" />
+                    <p className="font-black uppercase tracking-widest text-sm italic">Carregando histórico...</p>
+                  </div>
+                ) : history.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-20 text-gray-300">
+                    <History size={64} className="mb-4 opacity-10" />
+                    <p className="font-black uppercase tracking-widest text-sm italic">Nenhum registro encontrado</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {history
+                      .filter(item => 
+                        item.Title.toLowerCase().includes(historySearch.toLowerCase()) ||
+                        item.nNF.includes(historySearch) ||
+                        item.CNPJ.includes(historySearch)
+                      )
+                      .slice((historyPage - 1) * 10, historyPage * 10)
+                      .map((item) => (
+                        <div key={item.Id} className="group bg-white border border-gray-100 rounded-2xl p-4 hover:shadow-md transition-all flex flex-col md:row items-center justify-between gap-4">
+                          <div className="flex items-center gap-4 flex-1">
+                            <div className={`p-3 rounded-xl ${item.Status === 'Validado' ? 'bg-green-50 text-green-600' : 'bg-red-50 text-dhl-red'}`}>
+                              {item.Status === 'Validado' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <h4 className="font-bold text-dhl-dark truncate text-sm" title={item.Title}>{item.Title}</h4>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1">
+                                <span className="text-[10px] text-gray-400 flex items-center gap-1 font-bold uppercase">
+                                  <Clock size={10} /> {new Date(item.ValidationDate).toLocaleString('pt-BR')}
+                                </span>
+                                {item.nNF && (
+                                  <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-mono font-bold">
+                                    NF: {item.nNF}
+                                  </span>
+                                )}
+                                {item.CNPJ && (
+                                  <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-mono font-bold">
+                                    CNPJ: {item.CNPJ}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleRevertValidation(item)}
+                              className="px-3 py-2 bg-gray-50 hover:bg-orange-50 text-orange-600 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all border border-transparent hover:border-orange-100"
+                              title="Reverter validação e renomear arquivo no SharePoint"
+                            >
+                              <RotateCcw size={14} />
+                              Reverter
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+
+              {history.length > 10 && (
+                <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">
+                    Página {historyPage} de {Math.ceil(history.length / 10)}
+                  </p>
+                  <div className="flex gap-2">
+                    <button 
+                      disabled={historyPage === 1}
+                      onClick={() => setHistoryPage(p => p - 1)}
+                      className="p-2 bg-white border border-gray-200 rounded-lg disabled:opacity-30 hover:bg-gray-50 transition-colors"
+                    >
+                      <ChevronLeft size={20} />
+                    </button>
+                    <button 
+                      disabled={historyPage >= Math.ceil(history.length / 10)}
+                      onClick={() => setHistoryPage(p => p + 1)}
+                      className="p-2 bg-white border border-gray-200 rounded-lg disabled:opacity-30 hover:bg-gray-50 transition-colors"
+                    >
+                      <ChevronRight size={20} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* Footer */}
       <footer className="bg-dhl-dark text-white py-12 mt-20">

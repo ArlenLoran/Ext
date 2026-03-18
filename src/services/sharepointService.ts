@@ -154,3 +154,35 @@ export async function renameXmlFileAsValidated(serverRelativeUrl: string): Promi
 
   return targetUrl;
 }
+
+export async function revertXmlFileValidation(serverRelativeUrl: string): Promise<string> {
+  const currentUrl = String(serverRelativeUrl || '').trim();
+  if (!currentUrl) throw new Error('URL do arquivo no SharePoint não informada.');
+
+  const segments = currentUrl.split('/');
+  const currentName = segments.pop() || '';
+  
+  // Remove " validado" from the end, before .xml
+  const originalName = currentName.replace(/\svalidado\.xml$/i, '.xml');
+
+  if (originalName === currentName) return currentUrl;
+
+  const targetUrl = `${segments.join('/')}/${originalName}`;
+  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${buildDecodedUrlApiSegment(currentUrl)})/moveto(newurl='${escapeODataString(targetUrl)}',flags=1)`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/json; odata=verbose',
+      'X-RequestDigest': getRequestDigest()
+    },
+    credentials: 'same-origin'
+  });
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => '');
+    throw new Error(message || `Não foi possível reverter a renomeação do arquivo ${currentName} no SharePoint.`);
+  }
+
+  return targetUrl;
+}
