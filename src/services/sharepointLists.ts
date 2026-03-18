@@ -48,6 +48,18 @@ const spContext = {
     }
     return url || "/";
   },
+
+  get userEmail(): string {
+    return window._spPageContextInfo?.userEmail || "desconhecido@dhl.com";
+  },
+
+  get userDisplayName(): string {
+    return window._spPageContextInfo?.userDisplayName || "Usuário Desconhecido";
+  },
+
+  isAvailable(): boolean {
+    return !!window._spPageContextInfo;
+  },
 };
 
 function buildApiUrl(path: string): string {
@@ -131,7 +143,14 @@ function mapFieldType(type: SharePointFieldType): number {
 
 export const SharePointListsService = {
   isContextAvailable(): boolean {
-    return !!window._spPageContextInfo?.webAbsoluteUrl;
+    return spContext.isAvailable();
+  },
+
+  getUserInfo(): { email: string; displayName: string } {
+    return {
+      email: spContext.userEmail,
+      displayName: spContext.userDisplayName
+    };
   },
 
   async listExists(listTitle: string): Promise<boolean> {

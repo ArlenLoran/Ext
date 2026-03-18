@@ -85,12 +85,19 @@ export default function App() {
   const [isSpInitialized, setIsSpInitialized] = useState(false);
   const [isInitializingSp, setIsInitializingSp] = useState(false);
 
-  // History State
-  const [history, setHistory] = useState<any[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [isFetchingHistory, setIsFetchingHistory] = useState(false);
-  const [historySearch, setHistorySearch] = useState('');
-  const [historyPage, setHistoryPage] = useState(1);
+  // Revalidation State (formerly History)
+  const [revalidationItems, setRevalidationItems] = useState<any[]>([]);
+  const [showRevalidation, setShowRevalidation] = useState(false);
+  const [isFetchingRevalidation, setIsFetchingRevalidation] = useState(false);
+  const [revalidationSearch, setRevalidationSearch] = useState('');
+  const [revalidationPage, setRevalidationPage] = useState(1);
+
+  // Full History State
+  const [fullHistory, setFullHistory] = useState<any[]>([]);
+  const [showFullHistory, setShowFullHistory] = useState(false);
+  const [isFetchingFullHistory, setIsFetchingFullHistory] = useState(false);
+  const [fullHistorySearch, setFullHistorySearch] = useState('');
+  const [fullHistoryPage, setFullHistoryPage] = useState(1);
 
   // Validation Rules State
   const [mandatoryTags, setMandatoryTags] = useState<{ name: string, tag: string }[]>(() => {
@@ -142,31 +149,49 @@ export default function App() {
       const recExists = await SharePointListsService.listExists('DHL_Recipients');
       const tagExists = await SharePointListsService.listExists('DHL_MandatoryTags');
       const patExists = await SharePointListsService.listExists('DHL_OSPatterns');
-      const histExists = await SharePointListsService.listExists('DHL_ValidationHistory');
+      const revalExists = await SharePointListsService.listExists('DHL_ValidationHistory');
+      const histExists = await SharePointListsService.listExists('DHL_FullHistory');
       
-      if (recExists && tagExists && patExists && histExists) {
+      if (recExists && tagExists && patExists && revalExists && histExists) {
         setIsSpInitialized(true);
         loadDataFromSharePoint();
-        loadHistoryFromSharePoint();
+        loadRevalidationFromSharePoint();
+        loadFullHistoryFromSharePoint();
       }
     } catch (error) {
       console.error('Erro ao verificar inicialização do SharePoint:', error);
     }
   };
 
-  const loadHistoryFromSharePoint = async () => {
+  const loadRevalidationFromSharePoint = async () => {
     if (!SharePointListsService.isContextAvailable()) return;
-    setIsFetchingHistory(true);
+    setIsFetchingRevalidation(true);
     try {
       const items = await SharePointListsService.getItems('DHL_ValidationHistory', {
         orderBy: 'Id desc',
         top: 500
       });
-      setHistory(items);
+      setRevalidationItems(items);
+    } catch (error) {
+      console.error('Erro ao carregar revalidação:', error);
+    } finally {
+      setIsFetchingRevalidation(false);
+    }
+  };
+
+  const loadFullHistoryFromSharePoint = async () => {
+    if (!SharePointListsService.isContextAvailable()) return;
+    setIsFetchingFullHistory(true);
+    try {
+      const items = await SharePointListsService.getItems('DHL_FullHistory', {
+        orderBy: 'Id desc',
+        top: 500
+      });
+      setFullHistory(items);
     } catch (error) {
       console.error('Erro ao carregar histórico:', error);
     } finally {
-      setIsFetchingHistory(false);
+      setIsFetchingFullHistory(false);
     }
   };
 
@@ -215,8 +240,8 @@ export default function App() {
         { title: 'Title', type: 'Text', required: true } // Regex Pattern
       ]);
 
-      // Ensure Validation History List
-      await SharePointListsService.ensureList('DHL_ValidationHistory', 'Histórico de validações de XML', [
+      // Ensure Validation History List (Revalidation)
+      await SharePointListsService.ensureList('DHL_ValidationHistory', 'Arquivos validados para revalidação', [
         { title: 'Title', type: 'Text', required: true }, // Filename
         { title: 'Status', type: 'Text', required: true },
         { title: 'nNF', type: 'Text' },
@@ -226,11 +251,24 @@ export default function App() {
         { title: 'ValidationDate', type: 'DateTime' }
       ]);
 
+      // Ensure Full History List
+      await SharePointListsService.ensureList('DHL_FullHistory', 'Histórico completo de todas as validações', [
+        { title: 'Title', type: 'Text', required: true }, // Filename
+        { title: 'Status', type: 'Text', required: true },
+        { title: 'nNF', type: 'Text' },
+        { title: 'CNPJ', type: 'Text' },
+        { title: 'UserEmail', type: 'Text' },
+        { title: 'Source', type: 'Text' }, // SharePoint / Local
+        { title: 'ValidationDate', type: 'DateTime' }
+      ]);
+
       setIsSpInitialized(true);
       setNotification({ type: 'success', message: 'Listas do SharePoint inicializadas com sucesso!' });
       
       // Sync current local data to SharePoint
       await syncAllToSharePoint();
+      loadRevalidationFromSharePoint();
+      loadFullHistoryFromSharePoint();
       
     } catch (error) {
       console.error('Erro ao inicializar SharePoint:', error);
@@ -648,7 +686,7 @@ export default function App() {
               Errors: result?.errors.join('; ') || '',
               ValidationDate: new Date().toISOString()
             });
-            loadHistoryFromSharePoint();
+            loadRevalidationFromSharePoint();
           }
 
           // Update the local state with the new URL for this file
@@ -747,6 +785,27 @@ export default function App() {
       return combined;
     });
 
+    // Log to Full History if SharePoint is initialized
+    if (isSpInitialized) {
+      const userInfo = SharePointListsService.getUserInfo();
+      newResults.forEach(async (res) => {
+        try {
+          await SharePointListsService.createItem('DHL_FullHistory', {
+            Title: res.fileName,
+            Status: res.isValid ? 'Válido' : 'Inválido',
+            nNF: res.nNF || '',
+            CNPJ: res.cnpj || '',
+            UserEmail: userInfo.email,
+            Source: res.sharepointUrl ? 'SharePoint' : 'Local',
+            ValidationDate: new Date().toISOString()
+          });
+        } catch (err) {
+          console.error('Erro ao logar no histórico completo:', err);
+        }
+      });
+      loadFullHistoryFromSharePoint();
+    }
+
     return newResults;
   };
 
@@ -773,7 +832,7 @@ export default function App() {
 
   const handleRevertValidation = async (historyItem: any) => {
     if (!isSpAvailable) return;
-    setIsFetchingHistory(true);
+    setIsFetchingRevalidation(true);
     try {
       // 1. Revert rename in SharePoint
       await revertXmlFileValidation(historyItem.ServerRelativeUrl);
@@ -788,12 +847,12 @@ export default function App() {
       setNotification({ type: 'success', message: `Validação do arquivo ${historyItem.Title} revertida com sucesso!` });
       
       // 3. Refresh history
-      await loadHistoryFromSharePoint();
+      await loadRevalidationFromSharePoint();
     } catch (error) {
       console.error('Erro detalhado na reversão:', error);
       setNotification({ type: 'error', message: 'Erro ao reverter validação. Verifique o console para detalhes.' });
     } finally {
-      setIsFetchingHistory(false);
+      setIsFetchingRevalidation(false);
       setTimeout(() => setNotification(null), 3000);
     }
   };
@@ -870,12 +929,23 @@ export default function App() {
               {/* Secondary Actions Group */}
               <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl p-1">
                 <button 
-                  onClick={() => setShowHistory(true)}
+                  onClick={() => setShowFullHistory(true)}
                   className="p-2 text-gray-500 hover:bg-gray-200 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
-                  title="Histórico de Validações"
+                  title="Histórico Completo de Validações"
                 >
                   <History size={16} />
                   <span className="hidden sm:inline">Histórico</span>
+                </button>
+
+                <div className="w-px h-6 bg-gray-200 mx-1" />
+
+                <button 
+                  onClick={() => setShowRevalidation(true)}
+                  className="p-2 text-gray-500 hover:bg-gray-200 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
+                  title="Revalidação de Arquivos SharePoint"
+                >
+                  <RotateCcw size={16} />
+                  <span className="hidden sm:inline">Revalidação</span>
                 </button>
 
                 <div className="w-px h-6 bg-gray-200 mx-1" />
@@ -1605,9 +1675,9 @@ export default function App() {
         </section>
       </main>
       
-      {/* History Modal */}
+      {/* Revalidation Modal (formerly History) */}
       <AnimatePresence>
-        {showHistory && (
+        {showRevalidation && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -1617,20 +1687,20 @@ export default function App() {
             >
               <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
                 <div className="flex items-center gap-4">
-                  <div className="bg-dhl-dark p-3 rounded-2xl shadow-lg">
-                    <History className="text-dhl-yellow" size={24} />
+                  <div className="bg-orange-500 p-3 rounded-2xl shadow-lg">
+                    <RotateCcw className="text-white" size={24} />
                   </div>
                   <div>
                     <h3 className="text-xl font-black text-dhl-dark italic uppercase tracking-tighter leading-none">
-                      Histórico de Validações
+                      Revalidação de Arquivos
                     </h3>
                     <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">
-                      Registros persistidos no SharePoint
+                      Arquivos marcados como validados no SharePoint
                     </p>
                   </div>
                 </div>
                 <button 
-                  onClick={() => setShowHistory(false)}
+                  onClick={() => setShowRevalidation(false)}
                   className="p-2 hover:bg-gray-200 rounded-full transition-colors text-gray-400"
                 >
                   <X size={24} />
@@ -1643,41 +1713,41 @@ export default function App() {
                   <input 
                     type="text"
                     placeholder="Buscar por arquivo, NF ou CNPJ..."
-                    value={historySearch}
-                    onChange={(e) => { setHistorySearch(e.target.value); setHistoryPage(1); }}
+                    value={revalidationSearch}
+                    onChange={(e) => { setRevalidationSearch(e.target.value); setRevalidationPage(1); }}
                     className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium"
                   />
                 </div>
                 <button 
-                  onClick={loadHistoryFromSharePoint}
-                  disabled={isFetchingHistory}
+                  onClick={loadRevalidationFromSharePoint}
+                  disabled={isFetchingRevalidation}
                   className="px-4 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-600 transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest disabled:opacity-50"
                 >
-                  <RotateCcw size={16} className={isFetchingHistory ? 'animate-spin' : ''} />
+                  <RotateCcw size={16} className={isFetchingRevalidation ? 'animate-spin' : ''} />
                   Atualizar
                 </button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-6">
-                {isFetchingHistory && history.length === 0 ? (
+                {isFetchingRevalidation && revalidationItems.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-gray-400">
                     <Loader2 size={48} className="animate-spin mb-4 opacity-20" />
-                    <p className="font-black uppercase tracking-widest text-sm italic">Carregando histórico...</p>
+                    <p className="font-black uppercase tracking-widest text-sm italic">Carregando itens...</p>
                   </div>
-                ) : history.length === 0 ? (
+                ) : revalidationItems.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-gray-300">
-                    <History size={64} className="mb-4 opacity-10" />
-                    <p className="font-black uppercase tracking-widest text-sm italic">Nenhum registro encontrado</p>
+                    <RotateCcw size={64} className="mb-4 opacity-10" />
+                    <p className="font-black uppercase tracking-widest text-sm italic">Nenhum arquivo para revalidação</p>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {history
+                    {revalidationItems
                       .filter(item => 
-                        item.Title.toLowerCase().includes(historySearch.toLowerCase()) ||
-                        item.nNF.includes(historySearch) ||
-                        item.CNPJ.includes(historySearch)
+                        item.Title.toLowerCase().includes(revalidationSearch.toLowerCase()) ||
+                        item.nNF.includes(revalidationSearch) ||
+                        item.CNPJ.includes(revalidationSearch)
                       )
-                      .slice((historyPage - 1) * 10, historyPage * 10)
+                      .slice((revalidationPage - 1) * 10, revalidationPage * 10)
                       .map((item) => (
                         <div key={item.Id} className="group bg-white border border-gray-100 rounded-2xl p-4 hover:shadow-md transition-all flex flex-col md:row items-center justify-between gap-4">
                           <div className="flex items-center gap-4 flex-1">
@@ -1693,11 +1763,6 @@ export default function App() {
                                 {item.nNF && (
                                   <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-mono font-bold">
                                     NF: {item.nNF}
-                                  </span>
-                                )}
-                                {item.CNPJ && (
-                                  <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-mono font-bold">
-                                    CNPJ: {item.CNPJ}
                                   </span>
                                 )}
                               </div>
@@ -1720,22 +1785,173 @@ export default function App() {
                 )}
               </div>
 
-              {history.length > 10 && (
+              {revalidationItems.length > 10 && (
                 <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
                   <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">
-                    Página {historyPage} de {Math.ceil(history.length / 10)}
+                    Página {revalidationPage} de {Math.ceil(revalidationItems.length / 10)}
                   </p>
                   <div className="flex gap-2">
                     <button 
-                      disabled={historyPage === 1}
-                      onClick={() => setHistoryPage(p => p - 1)}
+                      disabled={revalidationPage === 1}
+                      onClick={() => setRevalidationPage(p => p - 1)}
                       className="p-2 bg-white border border-gray-200 rounded-lg disabled:opacity-30 hover:bg-gray-50 transition-colors"
                     >
                       <ChevronLeft size={20} />
                     </button>
                     <button 
-                      disabled={historyPage >= Math.ceil(history.length / 10)}
-                      onClick={() => setHistoryPage(p => p + 1)}
+                      disabled={revalidationPage >= Math.ceil(revalidationItems.length / 10)}
+                      onClick={() => setRevalidationPage(p => p + 1)}
+                      className="p-2 bg-white border border-gray-200 rounded-lg disabled:opacity-30 hover:bg-gray-50 transition-colors"
+                    >
+                      <ChevronRight size={20} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Full History Modal */}
+      <AnimatePresence>
+        {showFullHistory && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col"
+            >
+              <div className="p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+                <div className="flex items-center gap-4">
+                  <div className="bg-dhl-dark p-3 rounded-2xl shadow-lg">
+                    <History className="text-dhl-yellow" size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-dhl-dark italic uppercase tracking-tighter leading-none">
+                      Histórico Completo
+                    </h3>
+                    <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">
+                      Log de todas as validações realizadas no sistema
+                    </p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowFullHistory(false)}
+                  className="p-2 hover:bg-gray-200 rounded-full transition-colors text-gray-400"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="p-6 bg-white border-b border-gray-100 flex flex-col md:row items-center gap-4">
+                <div className="relative flex-1 w-full">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <input 
+                    type="text"
+                    placeholder="Buscar por arquivo, NF, CNPJ ou e-mail..."
+                    value={fullHistorySearch}
+                    onChange={(e) => { setFullHistorySearch(e.target.value); setFullHistoryPage(1); }}
+                    className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium"
+                  />
+                </div>
+                <button 
+                  onClick={loadFullHistoryFromSharePoint}
+                  disabled={isFetchingFullHistory}
+                  className="px-4 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-600 transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest disabled:opacity-50"
+                >
+                  <RotateCcw size={16} className={isFetchingFullHistory ? 'animate-spin' : ''} />
+                  Atualizar
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[800px]">
+                  <thead className="sticky top-0 bg-gray-50 z-10">
+                    <tr className="border-b border-gray-200">
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Data/Hora</th>
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Arquivo</th>
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Status</th>
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest text-gray-400">NF / CNPJ</th>
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Usuário</th>
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Origem</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {isFetchingFullHistory && fullHistory.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-20 text-center">
+                          <Loader2 size={48} className="animate-spin mx-auto mb-4 opacity-20" />
+                          <p className="font-black uppercase tracking-widest text-sm italic text-gray-400">Carregando histórico...</p>
+                        </td>
+                      </tr>
+                    ) : fullHistory.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-20 text-center">
+                          <History size={64} className="mx-auto mb-4 opacity-10 text-gray-300" />
+                          <p className="font-black uppercase tracking-widest text-sm italic text-gray-300">Nenhum registro encontrado</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      fullHistory
+                        .filter(item => 
+                          item.Title.toLowerCase().includes(fullHistorySearch.toLowerCase()) ||
+                          item.nNF.includes(fullHistorySearch) ||
+                          item.CNPJ.includes(fullHistorySearch) ||
+                          item.UserEmail.toLowerCase().includes(fullHistorySearch.toLowerCase())
+                        )
+                        .slice((fullHistoryPage - 1) * 15, fullHistoryPage * 15)
+                        .map((item) => (
+                          <tr key={item.Id} className="hover:bg-gray-50 transition-colors">
+                            <td className="p-4 text-xs font-medium text-gray-500">
+                              {new Date(item.ValidationDate).toLocaleString('pt-BR')}
+                            </td>
+                            <td className="p-4">
+                              <p className="text-xs font-bold text-dhl-dark truncate max-w-[200px]" title={item.Title}>{item.Title}</p>
+                            </td>
+                            <td className="p-4">
+                              <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded-full ${item.Status === 'Válido' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-dhl-red'}`}>
+                                {item.Status}
+                              </span>
+                            </td>
+                            <td className="p-4">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="text-[10px] font-mono font-bold text-gray-600">NF: {item.nNF || '---'}</span>
+                                <span className="text-[9px] font-mono text-gray-400">CNPJ: {item.CNPJ || '---'}</span>
+                              </div>
+                            </td>
+                            <td className="p-4">
+                              <p className="text-xs font-medium text-gray-600">{item.UserEmail}</p>
+                            </td>
+                            <td className="p-4">
+                              <span className={`text-[9px] font-bold uppercase px-2 py-1 rounded border ${item.Source === 'SharePoint' ? 'border-blue-200 bg-blue-50 text-blue-600' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
+                                {item.Source}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {fullHistory.length > 15 && (
+                <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">
+                    Página {fullHistoryPage} de {Math.ceil(fullHistory.length / 15)}
+                  </p>
+                  <div className="flex gap-2">
+                    <button 
+                      disabled={fullHistoryPage === 1}
+                      onClick={() => setFullHistoryPage(p => p - 1)}
+                      className="p-2 bg-white border border-gray-200 rounded-lg disabled:opacity-30 hover:bg-gray-50 transition-colors"
+                    >
+                      <ChevronLeft size={20} />
+                    </button>
+                    <button 
+                      disabled={fullHistoryPage >= Math.ceil(fullHistory.length / 15)}
+                      onClick={() => setFullHistoryPage(p => p + 1)}
                       className="p-2 bg-white border border-gray-200 rounded-lg disabled:opacity-30 hover:bg-gray-50 transition-colors"
                     >
                       <ChevronRight size={20} />
