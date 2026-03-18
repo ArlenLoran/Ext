@@ -45,6 +45,7 @@ interface ValidationResult {
   cnpj: string;
   ncm: string;
   osField: string;
+  xProd: string;
   isValid: boolean;
   errors: string[];
   rawContent: string;
@@ -66,6 +67,15 @@ export default function App() {
   const [isFetchingSharePoint, setIsFetchingSharePoint] = useState(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   
+  // Results Filtering State
+  const [resultsFilters, setResultsFilters] = useState({
+    nNF: '',
+    cnpj: '',
+    ncm: '',
+    os: '',
+    xProd: ''
+  });
+
   // Email management state
   const [recipients, setRecipients] = useState<string[]>(() => {
     const saved = localStorage.getItem('dhl_recipients');
@@ -673,6 +683,16 @@ export default function App() {
     const ncm = getTagValue("NCM");
     const infCpl = getTagValue("infCpl");
 
+    // Extract all xProd values
+    const xProdElements = xmlDoc.getElementsByTagName("xProd");
+    const xProdList: string[] = [];
+    for (let i = 0; i < xProdElements.length; i++) {
+      if (xProdElements[i].textContent) {
+        xProdList.push(xProdElements[i].textContent!.trim());
+      }
+    }
+    const xProd = xProdList.join(" | ");
+
     // Dynamic Mandatory Tags Validation
     mandatoryTags.forEach(m => {
       const val = getTagValue(m.tag);
@@ -736,6 +756,7 @@ export default function App() {
       cnpj,
       ncm,
       osField: osValue || "Não encontrado",
+      xProd,
       isValid: errors.length === 0,
       errors,
       rawContent: text,
@@ -1643,15 +1664,122 @@ export default function App() {
 
         {/* Results Section */}
         <section className="space-y-6">
+          {results.length > 0 && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4"
+            >
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input 
+                  type="text"
+                  placeholder="nNF..."
+                  value={resultsFilters.nNF}
+                  onChange={(e) => setResultsFilters(prev => ({ ...prev, nNF: e.target.value }))}
+                  className="w-full pl-9 pr-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-dhl-red focus:border-transparent outline-none"
+                />
+              </div>
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input 
+                  type="text"
+                  placeholder="CNPJ..."
+                  value={resultsFilters.cnpj}
+                  onChange={(e) => setResultsFilters(prev => ({ ...prev, cnpj: e.target.value }))}
+                  className="w-full pl-9 pr-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-dhl-red focus:border-transparent outline-none"
+                />
+              </div>
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input 
+                  type="text"
+                  placeholder="NCM..."
+                  value={resultsFilters.ncm}
+                  onChange={(e) => setResultsFilters(prev => ({ ...prev, ncm: e.target.value }))}
+                  className="w-full pl-9 pr-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-dhl-red focus:border-transparent outline-none"
+                />
+              </div>
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input 
+                  type="text"
+                  placeholder="OS..."
+                  value={resultsFilters.os}
+                  onChange={(e) => setResultsFilters(prev => ({ ...prev, os: e.target.value }))}
+                  className="w-full pl-9 pr-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-dhl-red focus:border-transparent outline-none"
+                />
+              </div>
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input 
+                  type="text"
+                  placeholder="Produto..."
+                  value={resultsFilters.xProd}
+                  onChange={(e) => setResultsFilters(prev => ({ ...prev, xProd: e.target.value }))}
+                  className="w-full pl-9 pr-3 py-2 text-xs border border-gray-200 rounded-lg focus:ring-2 focus:ring-dhl-red focus:border-transparent outline-none"
+                />
+              </div>
+              {Object.values(resultsFilters).some(v => v !== '') && (
+                <div className="lg:col-span-5 flex justify-end">
+                  <button 
+                    onClick={() => setResultsFilters({ nNF: '', cnpj: '', ncm: '', os: '', xProd: '' })}
+                    className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest text-dhl-red hover:text-red-700 transition-colors"
+                  >
+                    <X size={14} /> Limpar Filtros
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          )}
+
           <AnimatePresence mode="popLayout">
-            {results.map((result, idx) => (
-              <motion.div
-                key={`${result.fileName}-${idx}`}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="glass-card rounded-xl overflow-hidden shadow-sm border-l-8 border-l-dhl-yellow"
-              >
+            {(() => {
+              const filtered = results.filter(r => {
+                const nNFMatch = r.nNF.toLowerCase().includes(resultsFilters.nNF.toLowerCase());
+                const cnpjMatch = r.cnpj.toLowerCase().includes(resultsFilters.cnpj.toLowerCase());
+                const ncmMatch = r.ncm.toLowerCase().includes(resultsFilters.ncm.toLowerCase());
+                const osMatch = r.osField.toLowerCase().includes(resultsFilters.os.toLowerCase());
+                const xProdMatch = r.xProd.toLowerCase().includes(resultsFilters.xProd.toLowerCase());
+                return nNFMatch && cnpjMatch && ncmMatch && osMatch && xProdMatch;
+              });
+
+              if (results.length > 0 && filtered.length === 0) {
+                return (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="text-center py-12 bg-white rounded-xl border border-dashed border-gray-200"
+                  >
+                    <Search size={40} className="mx-auto text-gray-200 mb-4" />
+                    <p className="text-gray-500 font-bold">Nenhum resultado corresponde aos filtros aplicados.</p>
+                    <button 
+                      onClick={() => setResultsFilters({ nNF: '', cnpj: '', ncm: '', os: '', xProd: '' })}
+                      className="mt-4 text-dhl-red font-black uppercase text-xs hover:underline"
+                    >
+                      Limpar todos os filtros
+                    </button>
+                  </motion.div>
+                );
+              }
+
+              return results.map((result, idx) => {
+                const nNFMatch = result.nNF.toLowerCase().includes(resultsFilters.nNF.toLowerCase());
+                const cnpjMatch = result.cnpj.toLowerCase().includes(resultsFilters.cnpj.toLowerCase());
+                const ncmMatch = result.ncm.toLowerCase().includes(resultsFilters.ncm.toLowerCase());
+                const osMatch = result.osField.toLowerCase().includes(resultsFilters.os.toLowerCase());
+                const xProdMatch = result.xProd.toLowerCase().includes(resultsFilters.xProd.toLowerCase());
+                
+                if (!(nNFMatch && cnpjMatch && ncmMatch && osMatch && xProdMatch)) return null;
+
+                return (
+                  <motion.div
+                    key={`${result.fileName}-${idx}`}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="glass-card rounded-xl overflow-hidden shadow-sm border-l-8 border-l-dhl-yellow"
+                  >
                 <div className="p-5 bg-white flex items-center justify-between border-b border-gray-100">
                   <div className="flex items-center gap-4">
                     <div className={`p-2 rounded-lg ${result.isValid ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
@@ -1785,6 +1913,18 @@ export default function App() {
                             </tr>
                           );
                         })}
+                        {/* Always show xProd if available */}
+                        {result.xProd && (
+                          <tr className="group hover:bg-gray-50 transition-colors">
+                            <td className="py-4 font-bold text-gray-600">Descrição do Produto (xProd)</td>
+                            <td className="py-4 font-mono text-[10px] max-w-[300px] truncate" title={result.xProd}>
+                              {result.xProd}
+                            </td>
+                            <td className="py-4">
+                              <CheckCircle2 className="text-green-500" size={18} />
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1868,7 +2008,9 @@ export default function App() {
                   )}
                 </AnimatePresence>
               </motion.div>
-            ))}
+                );
+              });
+            })()}
           </AnimatePresence>
 
           {results.length === 0 && (
