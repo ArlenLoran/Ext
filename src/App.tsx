@@ -30,10 +30,11 @@ import {
   History,
   RotateCcw,
   Clock,
-  Calendar
+  Calendar,
+  Download
 } from 'lucide-react';
 import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtml } from './services/emailService';
-import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation } from './services/sharepointService';
+import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation, downloadFileFromSharePoint } from './services/sharepointService';
 import { SharePointListsService } from './services/sharepointLists';
 
 interface ValidationResult {
@@ -875,6 +876,35 @@ export default function App() {
     setResults(prev => prev.filter((_, i) => i !== index));
   };
 
+  const downloadXml = (result: ValidationResult) => {
+    const blob = new Blob([result.rawContent], { type: 'text/xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = result.fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadFromSharePoint = async (serverRelativeUrl: string, fileName: string) => {
+    try {
+      const blob = await downloadFileFromSharePoint(serverRelativeUrl, fileName);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error(error);
+      setNotification({ type: 'error', message: 'Erro ao baixar arquivo do SharePoint.' });
+    }
+  };
+
   const handleRevertValidation = async (historyItem: any) => {
     if (!isSpAvailable) return;
     setIsFetchingRevalidation(true);
@@ -1517,6 +1547,13 @@ export default function App() {
                   </div>
                   <div className="flex items-center gap-2">
                     <button 
+                      onClick={() => downloadXml(result)}
+                      className="text-gray-300 hover:text-dhl-dark p-2 transition-colors"
+                      title="Baixar XML"
+                    >
+                      <Download size={20} />
+                    </button>
+                    <button 
                       onClick={() => toggleExpand(idx)}
                       className={`p-2 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest ${expandedIndices.includes(idx) ? 'bg-dhl-yellow text-dhl-dark' : 'text-gray-400 hover:bg-gray-100'}`}
                       title={expandedIndices.includes(idx) ? "Ocultar detalhes" : "Ver todos os campos"}
@@ -1841,6 +1878,13 @@ export default function App() {
                           </div>
                           
                           <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => downloadFromSharePoint(item.ServerRelativeUrl, item.Title)}
+                              className="p-2 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-lg transition-all border border-transparent hover:border-gray-200"
+                              title="Baixar XML do SharePoint"
+                            >
+                              <Download size={14} />
+                            </button>
                             <button
                               onClick={() => handleRevertValidation(item)}
                               className="px-3 py-2 bg-gray-50 hover:bg-orange-50 text-orange-600 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all border border-transparent hover:border-orange-100"

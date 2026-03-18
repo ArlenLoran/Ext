@@ -66,7 +66,7 @@ function buildDecodedUrlApiSegment(serverRelativeUrl: string): string {
   return `decodedurl='${escapeODataString(serverRelativeUrl)}'`;
 }
 
-async function downloadFileBlob(serverRelativeUrl: string, fileName: string): Promise<Blob> {
+export async function downloadFileFromSharePoint(serverRelativeUrl: string, fileName: string): Promise<Blob> {
   const decodedUrl = buildDecodedUrlApiSegment(serverRelativeUrl);
   const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${decodedUrl})/$value`;
 
@@ -108,7 +108,7 @@ export async function listXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'): Pr
 
   const downloaded = await Promise.all(
     xmlFiles.map(async (item) => {
-      const blob = await downloadFileBlob(item.ServerRelativeUrl, item.Name);
+      const blob = await downloadFileFromSharePoint(item.ServerRelativeUrl, item.Name);
       const file = new File([blob], item.Name, {
         type: 'text/xml',
         lastModified: Date.now()
