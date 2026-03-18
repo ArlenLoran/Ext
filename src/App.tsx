@@ -183,6 +183,83 @@ export default function App() {
     }
   }, []);
 
+  const extractXmlMetadata = (xmlText: string) => {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+    
+    const getTagValue = (tagName: string, parentPath?: string[]) => {
+      if (parentPath && parentPath.length > 0) {
+        let currentNodes: Element[] = [xmlDoc.documentElement];
+        
+        for (const pTag of parentPath) {
+          const nextNodes: Element[] = [];
+          for (const node of currentNodes) {
+            const children = node.getElementsByTagName("*");
+            for (let i = 0; i < children.length; i++) {
+              if (children[i].tagName.toLowerCase() === pTag.toLowerCase()) {
+                nextNodes.push(children[i]);
+              }
+            }
+          }
+          currentNodes = nextNodes;
+          if (currentNodes.length === 0) break;
+        }
+
+        if (currentNodes.length > 0) {
+          for (const node of currentNodes) {
+            const children = node.getElementsByTagName("*");
+            for (let i = 0; i < children.length; i++) {
+              if (children[i].tagName.toLowerCase() === tagName.toLowerCase()) {
+                return children[i].textContent?.trim() || "";
+              }
+            }
+          }
+        }
+      }
+
+      const allElements = xmlDoc.getElementsByTagName("*");
+      for (let i = 0; i < allElements.length; i++) {
+        if (allElements[i].tagName.toLowerCase() === tagName.toLowerCase()) {
+          return allElements[i].textContent?.trim() || "";
+        }
+      }
+      return "";
+    };
+
+    const nNF = getTagValue("nNF", ["infNFe", "ide"]);
+    const cnpj = getTagValue("CNPJ", ["infNFe", "emit"]);
+    
+    // Extract all NCM values
+    const ncmElements = xmlDoc.getElementsByTagName("NCM");
+    const ncmList: string[] = [];
+    for (let i = 0; i < ncmElements.length; i++) {
+      if (ncmElements[i].textContent) {
+        ncmList.push(ncmElements[i].textContent!.trim());
+      }
+    }
+    const ncm = ncmList.join(" | ");
+
+    const infCpl = getTagValue("infCpl", ["infNFe", "infAdic"]);
+    
+    const xProdElements = xmlDoc.getElementsByTagName("xProd");
+    const xProdList: string[] = [];
+    for (let i = 0; i < xProdElements.length; i++) {
+      if (xProdElements[i].textContent) {
+        xProdList.push(xProdElements[i].textContent!.trim());
+      }
+    }
+    const xProd = xProdList.join(" | ");
+
+    return { nNF, cnpj, ncm, infCpl, xProd };
+  };
+
+  // Refresh stats when manager is opened
+  React.useEffect(() => {
+    if (showSpManager && isSpAvailable) {
+      fetchSpStats();
+    }
+  }, [showSpManager, isSpAvailable]);
+
   const fetchSpStats = async () => {
     if (!SharePointListsService.isContextAvailable()) return;
     try {
@@ -216,6 +293,31 @@ export default function App() {
       const analyzedCount = enrichedFiles.filter(f => f.isValidated).length;
       const pendingCount = enrichedFiles.length - analyzedCount;
       setSpStats({ analyzed: analyzedCount, pending: pendingCount });
+
+      // Deep Scan for Pending Files (only if manager is open or first load)
+      const pendingFiles = enrichedFiles.filter(f => !f.isValidated && !f.nNF);
+      if (pendingFiles.length > 0) {
+        // Scan in chunks to avoid overwhelming the browser
+        const chunkSize = 5;
+        for (let i = 0; i < pendingFiles.length; i += chunkSize) {
+          const chunk = pendingFiles.slice(i, i + chunkSize);
+          await Promise.all(chunk.map(async (pfile) => {
+            try {
+              const blob = await downloadFileFromSharePoint(pfile.serverRelativeUrl, pfile.name);
+              const text = await blob.text();
+              const metadata = extractXmlMetadata(text);
+              
+              setSpFilesList(prev => prev.map(f => 
+                f.serverRelativeUrl === pfile.serverRelativeUrl 
+                ? { ...f, ...metadata, OS: metadata.infCpl } 
+                : f
+              ));
+            } catch (err) {
+              console.error(`Erro ao escanear ${pfile.name}:`, err);
+            }
+          }));
+        }
+      }
     } catch (error) {
       console.error('Erro ao buscar estatísticas do SharePoint:', error);
     } finally {
@@ -679,9 +781,13 @@ export default function App() {
     const text = await file.text();
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(text, "text/xml");
+    const metadata = extractXmlMetadata(text);
+    const { nNF, cnpj, ncm, infCpl, xProd } = metadata;
     
     const errors: string[] = [];
     
+    const osField = infCpl;
+
     // Helper to get element text (case-insensitive)
     const getTagValue = (tagName: string) => {
       const allElements = xmlDoc.getElementsByTagName("*");
@@ -692,21 +798,6 @@ export default function App() {
       }
       return "";
     };
-
-    const nNF = getTagValue("nNF");
-    const cnpj = getTagValue("CNPJ");
-    const ncm = getTagValue("NCM");
-    const infCpl = getTagValue("infCpl");
-
-    // Extract all xProd values
-    const xProdElements = xmlDoc.getElementsByTagName("xProd");
-    const xProdList: string[] = [];
-    for (let i = 0; i < xProdElements.length; i++) {
-      if (xProdElements[i].textContent) {
-        xProdList.push(xProdElements[i].textContent!.trim());
-      }
-    }
-    const xProd = xProdList.join(" | ");
 
     // Dynamic Mandatory Tags Validation
     mandatoryTags.forEach(m => {
