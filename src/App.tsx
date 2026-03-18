@@ -21,10 +21,16 @@ import {
   Plus,
   Edit2,
   Save,
-  X
+  X,
+  Braces,
+  ShieldAlert,
+  Search,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtml } from './services/emailService';
 import { listXmlFilesFromFolder, renameXmlFileAsValidated } from './services/sharepointService';
+import { SharePointListsService } from './services/sharepointLists';
 
 interface ValidationResult {
   fileName: string;
@@ -35,6 +41,7 @@ interface ValidationResult {
   isValid: boolean;
   errors: string[];
   rawContent: string;
+  extractedFields: Record<string, string>;
   allFields: { key: string; value: string }[];
   originalFile: File;
   sent: boolean;
@@ -61,9 +68,172 @@ export default function App() {
   const [editingEmail, setEditingEmail] = useState<{ index: number, value: string } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
+  // Pagination and Filtering State for Settings
+  const [emailSearch, setEmailSearch] = useState('');
+  const [emailPage, setEmailPage] = useState(1);
+  const [tagSearch, setTagSearch] = useState('');
+  const [tagPage, setTagPage] = useState(1);
+  const [patternSearch, setPatternSearch] = useState('');
+  const [patternPage, setPatternPage] = useState(1);
+  const itemsPerPage = 5;
+
+  // SharePoint Integration State
+  const [isSpAvailable, setIsSpAvailable] = useState(false);
+  const [isSpInitialized, setIsSpInitialized] = useState(false);
+  const [isInitializingSp, setIsInitializingSp] = useState(false);
+
+  // Validation Rules State
+  const [mandatoryTags, setMandatoryTags] = useState<{ name: string, tag: string }[]>(() => {
+    const saved = localStorage.getItem('dhl_mandatory_tags');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // Migration: if it's still an array of strings, convert to objects
+      if (parsed.length > 0 && typeof parsed[0] === 'string') {
+        return parsed.map((tag: string) => {
+          const name = {
+            nNF: "Número da Nota",
+            CNPJ: "CNPJ Emitente",
+            NCM: "NCM Produto",
+            infCpl: "Campo OS",
+            natOp: "Natureza da Operação"
+          }[tag] || tag;
+          return { name, tag };
+        });
+      }
+      return parsed;
+    }
+    return [
+      { name: "Número da Nota", tag: "nNF" },
+      { name: "CNPJ Emitente", tag: "CNPJ" },
+      { name: "NCM Produto", tag: "NCM" },
+      { name: "Campo OS", tag: "infCpl" }
+    ];
+  });
+  const [newTagName, setNewTagName] = useState('');
+  const [newTagRef, setNewTagRef] = useState('');
+
+  const [osForbiddenPatterns, setOsForbiddenPatterns] = useState<string[]>(() => {
+    const saved = localStorage.getItem('dhl_os_forbidden_patterns');
+    return saved ? JSON.parse(saved) : ["OS:\\s+\\d+", "OS:\\d+[\\.,]\\d+"];
+  });
+  const [newPattern, setNewPattern] = useState('');
+
+  // Check SharePoint Context on Mount
+  React.useEffect(() => {
+    const available = SharePointListsService.isContextAvailable();
+    setIsSpAvailable(available);
+    if (available) {
+      checkSpInitialization();
+    }
+  }, []);
+
+  const checkSpInitialization = async () => {
+    try {
+      const recExists = await SharePointListsService.listExists('DHL_Recipients');
+      const tagExists = await SharePointListsService.listExists('DHL_MandatoryTags');
+      const patExists = await SharePointListsService.listExists('DHL_OSPatterns');
+      
+      if (recExists && tagExists && patExists) {
+        setIsSpInitialized(true);
+        loadDataFromSharePoint();
+      }
+    } catch (error) {
+      console.error('Erro ao verificar inicialização do SharePoint:', error);
+    }
+  };
+
+  const loadDataFromSharePoint = async () => {
+    try {
+      const spRecipients = await SharePointListsService.getItems('DHL_Recipients', { select: ['Title'] });
+      if (spRecipients.length > 0) {
+        setRecipients(spRecipients.map(item => item.Title));
+      }
+
+      const spTags = await SharePointListsService.getItems('DHL_MandatoryTags', { select: ['Title', 'TagRef'] });
+      if (spTags.length > 0) {
+        setMandatoryTags(spTags.map(item => ({ name: item.Title, tag: item.TagRef })));
+      }
+
+      const spPatterns = await SharePointListsService.getItems('DHL_OSPatterns', { select: ['Title'] });
+      if (spPatterns.length > 0) {
+        setOsForbiddenPatterns(spPatterns.map(item => item.Title));
+      }
+    } catch (error) {
+      console.error('Erro ao carregar dados do SharePoint:', error);
+    }
+  };
+
+  const initializeSharePoint = async () => {
+    if (!isSpAvailable) {
+      setNotification({ type: 'error', message: 'Contexto do SharePoint não encontrado.' });
+      return;
+    }
+
+    setIsInitializingSp(true);
+    try {
+      // Ensure Recipients List
+      await SharePointListsService.ensureList('DHL_Recipients', 'Lista de e-mails para notificações', [
+        { title: 'Title', type: 'Text', required: true } // Title will be the Email
+      ]);
+
+      // Ensure Mandatory Tags List
+      await SharePointListsService.ensureList('DHL_MandatoryTags', 'Campos obrigatórios para validação XML', [
+        { title: 'Title', type: 'Text', required: true }, // Display Name
+        { title: 'TagRef', type: 'Text', required: true } // XML Tag
+      ]);
+
+      // Ensure OS Patterns List
+      await SharePointListsService.ensureList('DHL_OSPatterns', 'Padrões de regex para validação de OS', [
+        { title: 'Title', type: 'Text', required: true } // Regex Pattern
+      ]);
+
+      setIsSpInitialized(true);
+      setNotification({ type: 'success', message: 'Listas do SharePoint inicializadas com sucesso!' });
+      
+      // Sync current local data to SharePoint
+      await syncAllToSharePoint();
+      
+    } catch (error) {
+      console.error('Erro ao inicializar SharePoint:', error);
+      setNotification({ type: 'error', message: 'Erro ao criar listas no SharePoint.' });
+    } finally {
+      setIsInitializingSp(false);
+      setTimeout(() => setNotification(null), 3000);
+    }
+  };
+
+  const syncAllToSharePoint = async () => {
+    try {
+      // This is a simple sync: for each local item, upsert it to SharePoint
+      for (const email of recipients) {
+        await SharePointListsService.upsertItem('DHL_Recipients', `Title eq '${email}'`, { Title: email });
+      }
+      for (const tag of mandatoryTags) {
+        await SharePointListsService.upsertItem('DHL_MandatoryTags', `TagRef eq '${tag.tag}'`, { Title: tag.name, TagRef: tag.tag });
+      }
+      for (const pattern of osForbiddenPatterns) {
+        await SharePointListsService.upsertItem('DHL_OSPatterns', `Title eq '${pattern}'`, { Title: pattern });
+      }
+    } catch (error) {
+      console.error('Erro ao sincronizar dados com SharePoint:', error);
+    }
+  };
+
   React.useEffect(() => {
     localStorage.setItem('dhl_recipients', JSON.stringify(recipients));
-  }, [recipients]);
+    if (isSpInitialized) {
+      // Sync individual changes could be complex, for now we just save to localStorage
+      // In a real app, we'd update SP on each add/remove
+    }
+  }, [recipients, isSpInitialized]);
+
+  React.useEffect(() => {
+    localStorage.setItem('dhl_mandatory_tags', JSON.stringify(mandatoryTags));
+  }, [mandatoryTags]);
+
+  React.useEffect(() => {
+    localStorage.setItem('dhl_os_forbidden_patterns', JSON.stringify(osForbiddenPatterns));
+  }, [osForbiddenPatterns]);
 
   const addRecipient = (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,21 +247,36 @@ export default function App() {
       return;
     }
     setRecipients([...recipients, email]);
+    if (isSpInitialized) {
+      SharePointListsService.createItem('DHL_Recipients', { Title: email });
+    }
     setNewEmail('');
     setNotification({ type: 'success', message: 'E-mail adicionado com sucesso!' });
     setTimeout(() => setNotification(null), 3000);
   };
 
-  const removeRecipient = (index: number) => {
+  const removeRecipient = async (index: number) => {
+    const emailToRemove = recipients[index];
     setRecipients(recipients.filter((_, i) => i !== index));
+    if (isSpInitialized) {
+      try {
+        const items = await SharePointListsService.getItemsByFilter('DHL_Recipients', `Title eq '${emailToRemove}'`, { select: ['Id'] });
+        if (items.length > 0) {
+          await SharePointListsService.deleteItem('DHL_Recipients', items[0].Id);
+        }
+      } catch (error) {
+        console.error('Erro ao remover do SharePoint:', error);
+      }
+    }
   };
 
   const startEdit = (index: number, value: string) => {
     setEditingEmail({ index, value });
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingEmail) return;
+    const oldEmail = recipients[editingEmail.index];
     const email = editingEmail.value.trim();
     if (!email || !email.includes('@')) {
       setNotification({ type: 'error', message: 'E-mail inválido.' });
@@ -100,7 +285,90 @@ export default function App() {
     const updated = [...recipients];
     updated[editingEmail.index] = email;
     setRecipients(updated);
+
+    if (isSpInitialized) {
+      try {
+        const items = await SharePointListsService.getItemsByFilter('DHL_Recipients', `Title eq '${oldEmail}'`, { select: ['Id'] });
+        if (items.length > 0) {
+          await SharePointListsService.updateItem('DHL_Recipients', items[0].Id, { Title: email });
+        }
+      } catch (error) {
+        console.error('Erro ao atualizar no SharePoint:', error);
+      }
+    }
+
     setEditingEmail(null);
+  };
+
+  const addTag = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newTagName.trim();
+    const tag = newTagRef.trim();
+    if (!name || !tag) {
+      setNotification({ type: 'error', message: 'Preencha Nome e Referência.' });
+      return;
+    }
+    if (mandatoryTags.some(t => t.tag.toLowerCase() === tag.toLowerCase())) {
+      setNotification({ type: 'error', message: 'Esta referência já existe.' });
+      return;
+    }
+    setMandatoryTags([...mandatoryTags, { name, tag }]);
+    if (isSpInitialized) {
+      SharePointListsService.createItem('DHL_MandatoryTags', { Title: name, TagRef: tag });
+    }
+    setNewTagName('');
+    setNewTagRef('');
+    setNotification({ type: 'success', message: 'Campo obrigatório adicionado!' });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const removeTag = async (tagRef: string) => {
+    setMandatoryTags(mandatoryTags.filter(t => t.tag !== tagRef));
+    if (isSpInitialized) {
+      try {
+        const items = await SharePointListsService.getItemsByFilter('DHL_MandatoryTags', `TagRef eq '${tagRef}'`, { select: ['Id'] });
+        if (items.length > 0) {
+          await SharePointListsService.deleteItem('DHL_MandatoryTags', items[0].Id);
+        }
+      } catch (error) {
+        console.error('Erro ao remover tag do SharePoint:', error);
+      }
+    }
+  };
+
+  const addPattern = (e: React.FormEvent) => {
+    e.preventDefault();
+    const pattern = newPattern.trim();
+    if (!pattern) return;
+    try {
+      new RegExp(pattern);
+    } catch (e) {
+      setNotification({ type: 'error', message: 'Regex inválido.' });
+      return;
+    }
+    if (osForbiddenPatterns.includes(pattern)) {
+      setNotification({ type: 'error', message: 'Padrão já existe.' });
+      return;
+    }
+    setOsForbiddenPatterns([...osForbiddenPatterns, pattern]);
+    if (isSpInitialized) {
+      SharePointListsService.createItem('DHL_OSPatterns', { Title: pattern });
+    }
+    setNewPattern('');
+  };
+
+  const removePattern = async (pattern: string) => {
+    setOsForbiddenPatterns(osForbiddenPatterns.filter(p => p !== pattern));
+    if (isSpInitialized) {
+      try {
+        const items = await SharePointListsService.getItemsByFilter('DHL_OSPatterns', `Title eq '${pattern}'`, { select: ['Id'] });
+        if (items.length > 0) {
+          await SharePointListsService.deleteItem('DHL_OSPatterns', items[0].Id);
+        }
+      } catch (error) {
+        console.error('Erro ao remover padrão do SharePoint:', error);
+      }
+    }
   };
 
   const toggleExpand = (index: number) => {
@@ -215,10 +483,15 @@ export default function App() {
     
     const errors: string[] = [];
     
-    // Helper to get element text
+    // Helper to get element text (case-insensitive)
     const getTagValue = (tagName: string) => {
-      const el = xmlDoc.getElementsByTagName(tagName)[0];
-      return el ? el.textContent || "" : "";
+      const allElements = xmlDoc.getElementsByTagName("*");
+      for (let i = 0; i < allElements.length; i++) {
+        if (allElements[i].tagName.toLowerCase() === tagName.toLowerCase()) {
+          return allElements[i].textContent?.trim() || "";
+        }
+      }
+      return "";
     };
 
     const nNF = getTagValue("nNF");
@@ -226,9 +499,13 @@ export default function App() {
     const ncm = getTagValue("NCM");
     const infCpl = getTagValue("infCpl");
 
-    if (!nNF) errors.push("Número da Nota (nNF) não encontrado ou vazio.");
-    if (!cnpj) errors.push("CNPJ não encontrado ou vazio.");
-    if (!ncm) errors.push("NCM não encontrado ou vazio.");
+    // Dynamic Mandatory Tags Validation
+    mandatoryTags.forEach(m => {
+      const val = getTagValue(m.tag);
+      if (!val) {
+        errors.push(`Campo obrigatório '${m.name}' não encontrado ou vazio.`);
+      }
+    });
 
     // OS Validation
     const osMatch = infCpl.match(/OS:(\d+)/);
@@ -241,22 +518,35 @@ export default function App() {
         errors.push("Campo OS não encontrado nas informações complementares (infCpl).");
       }
     } else {
-      const malformedOS = infCpl.match(/OS:\s+\d+|OS:\d+[\.,]\d+/i);
-      if (malformedOS) {
-        errors.push(`Aviso: Detectado possível formato inválido próximo a '${malformedOS[0]}'. O padrão correto é 'OS:62669329'.`);
-      }
+      // Dynamic Forbidden Patterns Validation
+      osForbiddenPatterns.forEach(patternStr => {
+        try {
+          const regex = new RegExp(patternStr, 'i');
+          const match = infCpl.match(regex);
+          if (match) {
+            errors.push(`Aviso: Detectado possível formato inválido próximo a '${match[0]}'. O padrão correto é 'OS:62669329'.`);
+          }
+        } catch (e) {
+          console.error("Invalid regex pattern:", patternStr);
+        }
+      });
     }
 
-    // Extract all other fields
+    // Extract all fields
     const allFields: { key: string; value: string }[] = [];
-    const mandatoryTags = ["nNF", "CNPJ", "NCM", "infCpl"];
+    const extractedFields: Record<string, string> = {};
     
     const traverse = (node: Node) => {
       if (node.nodeType === 1) { // Element
         const element = node as Element;
         if (element.children.length === 0 && element.textContent?.trim()) {
-          if (!mandatoryTags.includes(element.tagName)) {
-            allFields.push({ key: element.tagName, value: element.textContent.trim() });
+          const tag = element.tagName;
+          const val = element.textContent.trim();
+          extractedFields[tag] = val;
+          // Case-insensitive check for mandatory tags
+          const isMandatory = mandatoryTags.some(t => t.tag.toLowerCase() === tag.toLowerCase());
+          if (!isMandatory) {
+            allFields.push({ key: tag, value: val });
           }
         }
         for (let i = 0; i < element.children.length; i++) {
@@ -275,6 +565,7 @@ export default function App() {
       isValid: errors.length === 0,
       errors,
       rawContent: text,
+      extractedFields,
       allFields,
       originalFile: file,
       sent: false
@@ -466,19 +757,64 @@ export default function App() {
 
         {/* Hero / Upload Section */}
         <section className="space-y-4">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-            <h2 className="text-3xl font-bold tracking-tight text-dhl-dark">Validação de Notas Fiscais</h2>
-            <div className="flex flex-wrap items-center gap-3">
-              <button 
-                onClick={() => setShowSettings(!showSettings)}
-                className="bg-white text-dhl-dark border border-gray-200 px-4 py-2 rounded-md transition-all flex items-center gap-2 font-bold text-sm shadow-sm hover:bg-gray-50"
-              >
-                <Settings size={16} /> DESTINATÁRIOS
-              </button>
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <div className="flex items-center gap-4">
+              <div className="bg-dhl-yellow p-3 rounded-xl shadow-inner">
+                <FileText size={24} className="text-dhl-dark" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-black tracking-tighter text-dhl-dark italic uppercase leading-none">
+                  Validação de Notas
+                </h2>
+                <div className="flex items-center gap-3 mt-2">
+                  <div className="flex items-center gap-1.5 bg-green-50 px-2 py-0.5 rounded-full border border-green-100">
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    <span className="text-[9px] font-black text-green-700 uppercase tracking-widest">
+                      {results.filter(r => r.errors.length === 0).length} OK
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 bg-red-50 px-2 py-0.5 rounded-full border border-red-100">
+                    <span className="w-1.5 h-1.5 rounded-full bg-dhl-red" />
+                    <span className="text-[9px] font-black text-dhl-red uppercase tracking-widest">
+                      {results.filter(r => r.errors.length > 0).length} ERROS
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 md:gap-3">
+              {/* Secondary Actions Group */}
+              <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl p-1">
+                <button 
+                  onClick={() => setShowSettings(!showSettings)}
+                  className={`p-2 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest ${showSettings ? 'bg-dhl-dark text-white' : 'text-gray-500 hover:bg-gray-200'}`}
+                  title="Configurações do Sistema"
+                >
+                  <Settings size={16} />
+                  <span className="hidden sm:inline">Configurações</span>
+                </button>
+                
+                {results.length > 0 && (
+                  <>
+                    <div className="w-px h-6 bg-gray-200 mx-1" />
+                    <button 
+                      onClick={clearAll}
+                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
+                      title="Limpar Tudo"
+                    >
+                      <Trash2 size={16} />
+                      <span className="hidden sm:inline">Limpar</span>
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Primary Actions */}
               <button 
                 onClick={handleSharePointImport}
                 disabled={isFetchingSharePoint}
-                className="bg-white text-dhl-dark border border-gray-200 px-4 py-2 rounded-md transition-all flex items-center gap-2 font-bold text-sm shadow-sm hover:bg-gray-50 disabled:opacity-50"
+                className="bg-dhl-dark text-white px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 font-black text-xs uppercase tracking-widest shadow-lg hover:bg-black disabled:opacity-50"
               >
                 {isFetchingSharePoint ? (
                   <><Loader2 size={16} className="animate-spin" /> BUSCANDO...</>
@@ -486,27 +822,20 @@ export default function App() {
                   <><FileSearch size={16} /> IMPORTAR SHAREPOINT</>
                 )}
               </button>
+
               {results.some(r => r.errors.length > 0) && (
                 <button 
                   onClick={handleSendBatchReport}
                   disabled={isSendingBatch || results.filter(r => r.errors.length > 0).every(r => r.sent)}
-                  className="bg-dhl-red text-white px-4 py-2 rounded-md transition-all flex items-center gap-2 font-bold text-sm shadow-md hover:bg-red-700 disabled:opacity-50"
+                  className="bg-dhl-red text-white px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 font-black text-xs uppercase tracking-widest shadow-lg hover:bg-red-700 disabled:opacity-50"
                 >
                   {isSendingBatch ? (
-                    <><Loader2 size={16} className="animate-spin" /> ENVIANDO LOTE...</>
+                    <><Loader2 size={16} className="animate-spin" /> ENVIANDO...</>
                   ) : results.filter(r => r.errors.length > 0).every(r => r.sent) ? (
                     <><CheckCircle2 size={16} /> LOTE ENVIADO</>
                   ) : (
-                    <><Mail size={16} /> REPORTAR TODAS AS DIVERGÊNCIAS</>
+                    <><Mail size={16} /> REPORTAR TUDO</>
                   )}
-                </button>
-              )}
-              {results.length > 0 && (
-                <button 
-                  onClick={clearAll}
-                  className="text-dhl-red hover:bg-dhl-red/10 px-4 py-2 rounded-md transition-colors flex items-center gap-2 font-bold text-sm"
-                >
-                  <Trash2 size={16} /> LIMPAR TUDO
                 </button>
               )}
             </div>
@@ -520,76 +849,397 @@ export default function App() {
                 exit={{ height: 0, opacity: 0 }}
                 className="overflow-hidden"
               >
-                <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm space-y-4">
+                <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm space-y-8">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-bold text-dhl-dark flex items-center gap-2">
-                      <Mail size={20} className="text-dhl-red" /> Gerenciar Destinatários
+                    <h3 className="text-xl font-black text-dhl-dark flex items-center gap-2 italic uppercase tracking-tighter">
+                      <Settings size={24} className="text-dhl-red" /> Configurações do Sistema
                     </h3>
                     <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-gray-600">
-                      <X size={20} />
+                      <X size={24} />
                     </button>
                   </div>
-                  
-                  <form onSubmit={addRecipient} className="flex gap-2">
-                    <input 
-                      type="email" 
-                      value={newEmail}
-                      onChange={(e) => setNewEmail(e.target.value)}
-                      placeholder="Novo e-mail de destino..."
-                      className="flex-1 px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-dhl-red/20 focus:border-dhl-red"
-                    />
-                    <button 
-                      type="submit"
-                      className="bg-dhl-dark text-white px-4 py-2 rounded-md font-bold text-sm flex items-center gap-2 hover:bg-black transition-colors"
-                    >
-                      <Plus size={16} /> ADICIONAR
-                    </button>
-                  </form>
 
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
-                    {recipients.length === 0 ? (
-                      <p className="text-sm text-gray-500 italic">Nenhum e-mail cadastrado. O sistema não poderá enviar relatórios.</p>
-                    ) : (
-                      recipients.map((email, idx) => (
-                        <div key={idx} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg group">
-                          {editingEmail?.index === idx ? (
-                            <div className="flex-1 flex gap-2">
-                              <input 
-                                type="email" 
-                                value={editingEmail.value}
-                                onChange={(e) => setEditingEmail({ ...editingEmail, value: e.target.value })}
-                                className="flex-1 px-2 py-1 border border-gray-300 rounded focus:outline-none"
-                                autoFocus
-                              />
-                              <button onClick={saveEdit} className="text-green-600 hover:text-green-700">
-                                <Save size={18} />
+                  {/* SharePoint Integration Banner */}
+                  <div className={`p-4 rounded-xl border flex items-center justify-between gap-4 ${isSpInitialized ? 'bg-green-50 border-green-100' : isSpAvailable ? 'bg-blue-50 border-blue-100' : 'bg-gray-50 border-gray-100'}`}>
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${isSpInitialized ? 'bg-green-100 text-green-600' : isSpAvailable ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'}`}>
+                        {isSpInitialized ? <CheckCircle2 size={20} /> : <ShieldAlert size={20} />}
+                      </div>
+                      <div>
+                        <h4 className={`text-sm font-black uppercase tracking-widest ${isSpInitialized ? 'text-green-700' : isSpAvailable ? 'text-blue-700' : 'text-gray-700'}`}>
+                          Integração SharePoint
+                        </h4>
+                        <p className="text-xs text-gray-500">
+                          {isSpInitialized 
+                            ? 'As configurações estão sendo sincronizadas com as listas do SharePoint.' 
+                            : isSpAvailable 
+                              ? 'O contexto do SharePoint foi detectado. Clique ao lado para inicializar as listas de persistência.'
+                              : 'Contexto do SharePoint não detectado. As configurações serão salvas apenas localmente.'}
+                        </p>
+                      </div>
+                    </div>
+                    {!isSpInitialized && (
+                      <button 
+                        onClick={isSpAvailable ? initializeSharePoint : () => {
+                          const available = SharePointListsService.isContextAvailable();
+                          setIsSpAvailable(available);
+                          if (available) {
+                            checkSpInitialization();
+                            setNotification({ type: 'success', message: 'Contexto detectado!' });
+                          } else {
+                            setNotification({ type: 'error', message: 'Contexto ainda não encontrado.' });
+                          }
+                          setTimeout(() => setNotification(null), 3000);
+                        }}
+                        disabled={isInitializingSp}
+                        className="bg-dhl-dark text-white px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest hover:bg-black transition-all flex items-center gap-2 disabled:opacity-50"
+                      >
+                        {isInitializingSp ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                        {isInitializingSp ? 'Inicializando...' : isSpAvailable ? 'Validar Contexto e Criar Listas' : 'Tentar Validar Contexto'}
+                      </button>
+                    )}
+                    {isSpInitialized && (
+                      <div className="flex items-center gap-2 text-green-600 font-black text-[10px] uppercase tracking-widest">
+                        <CheckCircle2 size={14} /> Ativo
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    {/* Recipients Section */}
+                    <div className="space-y-4 flex flex-col h-full">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                          <Mail size={16} /> Destinatários
+                        </h4>
+                        <div className="relative">
+                          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input 
+                            type="text"
+                            placeholder="Filtrar..."
+                            value={emailSearch}
+                            onChange={(e) => { setEmailSearch(e.target.value); setEmailPage(1); }}
+                            className="pl-7 pr-2 py-1 border border-gray-200 rounded text-[10px] focus:outline-none focus:ring-1 focus:ring-dhl-red/20 w-32"
+                          />
+                        </div>
+                      </div>
+                      
+                      <form onSubmit={addRecipient} className="flex gap-2">
+                        <input 
+                          type="email" 
+                          value={newEmail}
+                          onChange={(e) => setNewEmail(e.target.value)}
+                          placeholder="Novo e-mail..."
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-dhl-red/20"
+                        />
+                        <button 
+                          type="submit"
+                          className="bg-dhl-dark text-white p-2 rounded-md hover:bg-black transition-colors"
+                        >
+                          <Plus size={16} />
+                        </button>
+                      </form>
+
+                      <div className="flex-1 border border-gray-100 rounded-xl overflow-hidden bg-gray-50/50">
+                        <table className="w-full text-left border-collapse">
+                          <thead className="bg-gray-100/80">
+                            <tr>
+                              <th className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-500">E-mail</th>
+                              <th className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-500 text-right">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {(() => {
+                              const filtered = recipients.filter(e => e.toLowerCase().includes(emailSearch.toLowerCase()));
+                              const paginated = filtered.slice((emailPage - 1) * itemsPerPage, emailPage * itemsPerPage);
+                              
+                              if (paginated.length === 0) {
+                                return (
+                                  <tr>
+                                    <td colSpan={2} className="px-3 py-8 text-center text-xs text-gray-400 italic">Nenhum e-mail encontrado.</td>
+                                  </tr>
+                                );
+                              }
+
+                              return paginated.map((email) => {
+                                const idx = recipients.indexOf(email);
+                                return (
+                                  <tr key={idx} className="group hover:bg-white transition-colors">
+                                    <td className="px-3 py-2">
+                                      {editingEmail?.index === idx ? (
+                                        <input 
+                                          type="email" 
+                                          value={editingEmail.value}
+                                          onChange={(e) => setEditingEmail({ ...editingEmail, value: e.target.value })}
+                                          className="w-full px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none"
+                                          autoFocus
+                                          onBlur={saveEdit}
+                                          onKeyDown={(e) => e.key === 'Enter' && saveEdit()}
+                                        />
+                                      ) : (
+                                        <span className="text-xs font-medium text-gray-700 truncate block max-w-[150px]">{email}</span>
+                                      )}
+                                    </td>
+                                    <td className="px-3 py-2 text-right">
+                                      <div className="flex items-center justify-end gap-1">
+                                        <button onClick={() => startEdit(idx, email)} className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-md transition-colors">
+                                          <Edit2 size={12} />
+                                        </button>
+                                        <button onClick={() => removeRecipient(idx)} className="text-dhl-red hover:bg-red-50 p-1.5 rounded-md transition-colors">
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              });
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Pagination */}
+                      {(() => {
+                        const filtered = recipients.filter(e => e.toLowerCase().includes(emailSearch.toLowerCase()));
+                        const totalPages = Math.ceil(filtered.length / itemsPerPage);
+                        if (totalPages <= 1) return null;
+                        return (
+                          <div className="flex items-center justify-between pt-2">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Pág. {emailPage} de {totalPages}</span>
+                            <div className="flex gap-1">
+                              <button 
+                                disabled={emailPage === 1}
+                                onClick={() => setEmailPage(p => p - 1)}
+                                className="p-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-100"
+                              >
+                                <ChevronLeft size={14} />
                               </button>
-                              <button onClick={() => setEditingEmail(null)} className="text-gray-400 hover:text-gray-600">
-                                <X size={18} />
+                              <button 
+                                disabled={emailPage === totalPages}
+                                onClick={() => setEmailPage(p => p + 1)}
+                                className="p-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-100"
+                              >
+                                <ChevronRight size={14} />
                               </button>
                             </div>
-                          ) : (
-                            <>
-                              <span className="text-sm font-medium text-gray-700">{email}</span>
-                              <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button 
-                                  onClick={() => startEdit(idx, email)}
-                                  className="text-blue-600 hover:text-blue-700 p-1"
-                                >
-                                  <Edit2 size={16} />
-                                </button>
-                                <button 
-                                  onClick={() => removeRecipient(idx)}
-                                  className="text-dhl-red hover:text-red-700 p-1"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
-                              </div>
-                            </>
-                          )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* Mandatory Tags Section */}
+                    <div className="space-y-4 flex flex-col h-full">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                          <Braces size={16} /> Campos Obrigatórios
+                        </h4>
+                        <div className="relative">
+                          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input 
+                            type="text"
+                            placeholder="Filtrar..."
+                            value={tagSearch}
+                            onChange={(e) => { setTagSearch(e.target.value); setTagPage(1); }}
+                            className="pl-7 pr-2 py-1 border border-gray-200 rounded text-[10px] focus:outline-none focus:ring-1 focus:ring-dhl-red/20 w-32"
+                          />
                         </div>
-                      ))
-                    )}
+                      </div>
+
+                      <form onSubmit={addTag} className="flex flex-col gap-2">
+                        <input 
+                          type="text" 
+                          value={newTagName}
+                          onChange={(e) => setNewTagName(e.target.value)}
+                          placeholder="Nome (ex: Número da Nota)..."
+                          className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-dhl-red/20"
+                        />
+                        <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            value={newTagRef}
+                            onChange={(e) => setNewTagRef(e.target.value)}
+                            placeholder="Ref. XML (ex: nNF)..."
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-dhl-red/20"
+                          />
+                          <button type="submit" className="bg-dhl-dark text-white p-2 rounded-md hover:bg-black">
+                            <Plus size={16} />
+                          </button>
+                        </div>
+                      </form>
+
+                      <div className="flex-1 border border-gray-100 rounded-xl overflow-hidden bg-gray-50/50">
+                        <table className="w-full text-left border-collapse">
+                          <thead className="bg-gray-100/80">
+                            <tr>
+                              <th className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-500">Campo</th>
+                              <th className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-500 text-right">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {(() => {
+                              const filtered = mandatoryTags.filter(t => 
+                                t.name.toLowerCase().includes(tagSearch.toLowerCase()) || 
+                                t.tag.toLowerCase().includes(tagSearch.toLowerCase())
+                              );
+                              const paginated = filtered.slice((tagPage - 1) * itemsPerPage, tagPage * itemsPerPage);
+                              
+                              if (paginated.length === 0) {
+                                return (
+                                  <tr>
+                                    <td colSpan={2} className="px-3 py-8 text-center text-xs text-gray-400 italic">Nenhum campo encontrado.</td>
+                                  </tr>
+                                );
+                              }
+
+                              return paginated.map((m) => (
+                                <tr key={m.tag} className="group hover:bg-white transition-colors">
+                                  <td className="px-3 py-2">
+                                    <div className="flex flex-col">
+                                      <span className="text-xs font-bold text-gray-700 truncate block max-w-[120px]">{m.name}</span>
+                                      <span className="text-[9px] font-mono text-gray-400 uppercase">{m.tag}</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-2 text-right">
+                                    <button onClick={() => removeTag(m.tag)} className="text-dhl-red hover:bg-red-50 p-1.5 rounded-md transition-colors">
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ));
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Pagination */}
+                      {(() => {
+                        const filtered = mandatoryTags.filter(t => 
+                          t.name.toLowerCase().includes(tagSearch.toLowerCase()) || 
+                          t.tag.toLowerCase().includes(tagSearch.toLowerCase())
+                        );
+                        const totalPages = Math.ceil(filtered.length / itemsPerPage);
+                        if (totalPages <= 1) return null;
+                        return (
+                          <div className="flex items-center justify-between pt-2">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Pág. {tagPage} de {totalPages}</span>
+                            <div className="flex gap-1">
+                              <button 
+                                disabled={tagPage === 1}
+                                onClick={() => setTagPage(p => p - 1)}
+                                className="p-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-100"
+                              >
+                                <ChevronLeft size={14} />
+                              </button>
+                              <button 
+                                disabled={tagPage === totalPages}
+                                onClick={() => setTagPage(p => p + 1)}
+                                className="p-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-100"
+                              >
+                                <ChevronRight size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* OS Rules Section */}
+                    <div className="space-y-4 flex flex-col h-full">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                          <ShieldAlert size={16} /> Regras de OS (Regex)
+                        </h4>
+                        <div className="relative">
+                          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input 
+                            type="text"
+                            placeholder="Filtrar..."
+                            value={patternSearch}
+                            onChange={(e) => { setPatternSearch(e.target.value); setPatternPage(1); }}
+                            className="pl-7 pr-2 py-1 border border-gray-200 rounded text-[10px] focus:outline-none focus:ring-1 focus:ring-dhl-red/20 w-32"
+                          />
+                        </div>
+                      </div>
+
+                      <form onSubmit={addPattern} className="flex gap-2">
+                        <input 
+                          type="text" 
+                          value={newPattern}
+                          onChange={(e) => setNewPattern(e.target.value)}
+                          placeholder="Regex (ex: OS:\s+)..."
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-dhl-red/20"
+                        />
+                        <button type="submit" className="bg-dhl-dark text-white p-2 rounded-md hover:bg-black">
+                          <Plus size={16} />
+                        </button>
+                      </form>
+
+                      <div className="flex-1 border border-gray-100 rounded-xl overflow-hidden bg-gray-50/50">
+                        <table className="w-full text-left border-collapse">
+                          <thead className="bg-gray-100/80">
+                            <tr>
+                              <th className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-500">Padrão Regex</th>
+                              <th className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-500 text-right">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {(() => {
+                              const filtered = osForbiddenPatterns.filter(p => p.toLowerCase().includes(patternSearch.toLowerCase()));
+                              const paginated = filtered.slice((patternPage - 1) * itemsPerPage, patternPage * itemsPerPage);
+                              
+                              if (paginated.length === 0) {
+                                return (
+                                  <tr>
+                                    <td colSpan={2} className="px-3 py-8 text-center text-xs text-gray-400 italic">Nenhuma regra encontrada.</td>
+                                  </tr>
+                                );
+                              }
+
+                              return paginated.map((pattern) => (
+                                <tr key={pattern} className="group hover:bg-white transition-colors">
+                                  <td className="px-3 py-2">
+                                    <span className="text-[10px] font-mono text-gray-600 truncate block max-w-[150px]">{pattern}</span>
+                                  </td>
+                                  <td className="px-3 py-2 text-right">
+                                    <button onClick={() => removePattern(pattern)} className="text-dhl-red hover:bg-red-50 p-1.5 rounded-md transition-colors">
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ));
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Pagination */}
+                      {(() => {
+                        const filtered = osForbiddenPatterns.filter(p => p.toLowerCase().includes(patternSearch.toLowerCase()));
+                        const totalPages = Math.ceil(filtered.length / itemsPerPage);
+                        if (totalPages <= 1) return null;
+                        return (
+                          <div className="flex items-center justify-between pt-2">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Pág. {patternPage} de {totalPages}</span>
+                            <div className="flex gap-1">
+                              <button 
+                                disabled={patternPage === 1}
+                                onClick={() => setPatternPage(p => p - 1)}
+                                className="p-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-100"
+                              >
+                                <ChevronLeft size={14} />
+                              </button>
+                              <button 
+                                disabled={patternPage === totalPages}
+                                onClick={() => setPatternPage(p => p + 1)}
+                                className="p-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-100"
+                              >
+                                <ChevronRight size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -657,12 +1307,22 @@ export default function App() {
                       <p className="text-xs text-gray-400 font-mono uppercase">Hash: {Math.random().toString(36).substring(7).toUpperCase()}</p>
                     </div>
                   </div>
-                  <button 
-                    onClick={() => removeResult(idx)}
-                    className="text-gray-300 hover:text-dhl-red p-2 transition-colors"
-                  >
-                    <Trash2 size={20} />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => toggleExpand(idx)}
+                      className={`p-2 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest ${expandedIndices.includes(idx) ? 'bg-dhl-yellow text-dhl-dark' : 'text-gray-400 hover:bg-gray-100'}`}
+                      title={expandedIndices.includes(idx) ? "Ocultar detalhes" : "Ver todos os campos"}
+                    >
+                      {expandedIndices.includes(idx) ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                    </button>
+                    <button 
+                      onClick={() => removeResult(idx)}
+                      className="text-gray-300 hover:text-dhl-red p-2 transition-colors"
+                      title="Remover"
+                    >
+                      <Trash2 size={20} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -677,69 +1337,85 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
-                        <tr className="group hover:bg-gray-50 transition-colors">
-                          <td className="py-4 font-bold text-gray-600">Número da Nota (nNF)</td>
-                          <td className="py-4 font-mono text-dhl-red">{result.nNF || "---"}</td>
-                          <td className="py-4">
-                            {result.nNF ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}
-                          </td>
-                        </tr>
-                        <tr className="group hover:bg-gray-50 transition-colors">
-                          <td className="py-4 font-bold text-gray-600">CNPJ Emitente</td>
-                          <td className="py-4 font-mono">{result.cnpj || "---"}</td>
-                          <td className="py-4">
-                            {result.cnpj ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}
-                          </td>
-                        </tr>
-                        <tr className="group hover:bg-gray-50 transition-colors">
-                          <td className="py-4 font-bold text-gray-600">NCM Produto</td>
-                          <td className="py-4 font-mono">
-                            <div className="flex flex-col gap-1">
-                              <span>{result.ncm || "---"}</span>
-                              {result.ncm && (
-                                <div className="flex items-center gap-2">
-                                  {result.ntvStatus === 'loading' ? (
-                                    <span className="text-[10px] text-blue-500 flex items-center gap-1 animate-pulse">
-                                      <Loader2 size={10} className="animate-spin" /> Verificando NTV...
-                                    </span>
-                                  ) : result.ntvStatus === 'registered' ? (
-                                    <span className="text-[10px] text-green-600 font-bold flex items-center gap-1">
-                                      <CheckCircle2 size={10} /> Já cadastrado no sistema NTV
-                                    </span>
-                                  ) : result.ntvStatus === 'not_registered' ? (
-                                    <span className="text-[10px] text-orange-600 font-bold flex items-center gap-1">
-                                      <AlertCircle size={10} /> Não cadastrado no NTV
-                                    </span>
-                                  ) : result.ntvStatus === 'error' ? (
-                                    <span className="text-[10px] text-red-500 flex items-center gap-1">
-                                      <XCircle size={10} /> Erro na consulta NTV
-                                    </span>
-                                  ) : null}
-                                  <button 
-                                    onClick={() => checkNtvStatus(idx, result.ncm)}
-                                    className="text-[9px] underline text-gray-400 hover:text-dhl-red uppercase tracking-tighter"
-                                  >
-                                    Revalidar
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-4">
-                            {result.ncm ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}
-                          </td>
-                        </tr>
-                        <tr className="group hover:bg-gray-50 transition-colors">
-                          <td className="py-4 font-bold text-gray-600">Campo OS (infCpl)</td>
-                          <td className="py-4">
-                            <span className={`font-mono px-2 py-1 rounded ${result.osField !== "Não encontrado" ? 'bg-dhl-yellow/20 text-dhl-dark font-bold' : 'text-red-500'}`}>
-                              {result.osField}
-                            </span>
-                          </td>
-                          <td className="py-4">
-                            {result.osField !== "Não encontrado" ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}
-                          </td>
-                        </tr>
+                        {mandatoryTags.map(m => {
+                          // Case-insensitive lookup in extractedFields
+                          const actualKey = Object.keys(result.extractedFields).find(k => k.toLowerCase() === m.tag.toLowerCase());
+                          const value = actualKey ? result.extractedFields[actualKey] : "";
+                          
+                          const label = `${m.name} (${m.tag})`;
+
+                          // Special handling for NCM with NTV check
+                          if (m.tag.toLowerCase() === 'ncm') {
+                            return (
+                              <tr key={m.tag} className="group hover:bg-gray-50 transition-colors">
+                                <td className="py-4 font-bold text-gray-600">{label}</td>
+                                <td className="py-4 font-mono">
+                                  <div className="flex flex-col gap-1">
+                                    <span>{value || "---"}</span>
+                                    {value && (
+                                      <div className="flex items-center gap-2">
+                                        {result.ntvStatus === 'loading' ? (
+                                          <span className="text-[10px] text-blue-500 flex items-center gap-1 animate-pulse">
+                                            <Loader2 size={10} className="animate-spin" /> Verificando NTV...
+                                          </span>
+                                        ) : result.ntvStatus === 'registered' ? (
+                                          <span className="text-[10px] text-green-600 font-bold flex items-center gap-1">
+                                            <CheckCircle2 size={10} /> Já cadastrado no sistema NTV
+                                          </span>
+                                        ) : result.ntvStatus === 'not_registered' ? (
+                                          <span className="text-[10px] text-orange-600 font-bold flex items-center gap-1">
+                                            <AlertCircle size={10} /> Não cadastrado no NTV
+                                          </span>
+                                        ) : result.ntvStatus === 'error' ? (
+                                          <span className="text-[10px] text-red-500 flex items-center gap-1">
+                                            <XCircle size={10} /> Erro na consulta NTV
+                                          </span>
+                                        ) : null}
+                                        <button 
+                                          onClick={() => checkNtvStatus(idx, value)}
+                                          className="text-[9px] underline text-gray-400 hover:text-dhl-red uppercase tracking-tighter"
+                                        >
+                                          Revalidar
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="py-4">
+                                  {value ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          // Special handling for infCpl to show extracted OS
+                          if (m.tag.toLowerCase() === 'infcpl') {
+                            return (
+                              <tr key={m.tag} className="group hover:bg-gray-50 transition-colors">
+                                <td className="py-4 font-bold text-gray-600">{m.name} (infCpl)</td>
+                                <td className="py-4">
+                                  <span className={`font-mono px-2 py-1 rounded ${result.osField !== "Não encontrado" ? 'bg-dhl-yellow/20 text-dhl-dark font-bold' : 'text-red-500'}`}>
+                                    {result.osField}
+                                  </span>
+                                </td>
+                                <td className="py-4">
+                                  {result.osField !== "Não encontrado" ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          // Default row for other mandatory tags
+                          return (
+                            <tr key={m.tag} className="group hover:bg-gray-50 transition-colors">
+                              <td className="py-4 font-bold text-gray-600">{label}</td>
+                              <td className="py-4 font-mono">{value || "---"}</td>
+                              <td className="py-4">
+                                {value ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -789,17 +1465,6 @@ export default function App() {
                         </div>
                       )}
                     </div>
-                    
-                    <button 
-                      onClick={() => toggleExpand(idx)}
-                      className="mt-6 w-full py-3 bg-white border border-gray-200 rounded-lg text-xs font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-dhl-yellow/10 transition-colors shadow-sm"
-                    >
-                      {expandedIndices.includes(idx) ? (
-                        <>OCULTAR DETALHES <ChevronUp size={16} /></>
-                      ) : (
-                        <>VER TODOS OS CAMPOS <ChevronDown size={16} /></>
-                      )}
-                    </button>
                   </div>
                 </div>
 
