@@ -779,15 +779,19 @@ export default function App() {
       await revertXmlFileValidation(historyItem.ServerRelativeUrl);
       
       // 2. Delete from history list
-      await SharePointListsService.deleteItem('DHL_ValidationHistory', historyItem.Id);
+      try {
+        await SharePointListsService.deleteItem('DHL_ValidationHistory', historyItem.Id);
+      } catch (delError) {
+        console.warn('Erro ao deletar item do histórico, mas o arquivo foi restaurado:', delError);
+      }
       
       setNotification({ type: 'success', message: `Validação do arquivo ${historyItem.Title} revertida com sucesso!` });
       
       // 3. Refresh history
-      loadHistoryFromSharePoint();
+      await loadHistoryFromSharePoint();
     } catch (error) {
-      console.error(error);
-      setNotification({ type: 'error', message: 'Erro ao reverter validação.' });
+      console.error('Erro detalhado na reversão:', error);
+      setNotification({ type: 'error', message: 'Erro ao reverter validação. Verifique o console para detalhes.' });
     } finally {
       setIsFetchingHistory(false);
       setTimeout(() => setNotification(null), 3000);
