@@ -1233,7 +1233,7 @@ export default function App() {
               initial={{ opacity: 0, y: -50 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9 }}
-              className={`fixed top-24 right-6 z-[100] p-4 rounded-lg shadow-2xl flex items-center gap-3 border-l-4 ${
+              className={`fixed top-24 right-6 z-[300] p-4 rounded-lg shadow-2xl flex items-center gap-3 border-l-4 ${
                 notification.type === 'success' ? 'bg-white border-green-500 text-green-800' : 'bg-white border-red-500 text-red-800'
               }`}
             >
