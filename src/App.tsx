@@ -785,8 +785,8 @@ export default function App() {
       return combined;
     });
 
-    // Log to Full History if SharePoint is initialized
-    if (isSpInitialized) {
+    // Log to Full History if SharePoint context is available
+    if (SharePointListsService.isContextAvailable()) {
       const userInfo = SharePointListsService.getUserInfo();
       
       // Use Promise.all to ensure all items are created before refreshing the list
@@ -805,7 +805,9 @@ export default function App() {
           console.error('Erro ao logar no histórico completo:', err);
         }
       })).then(() => {
-        loadFullHistoryFromSharePoint();
+        if (isSpInitialized) {
+          loadFullHistoryFromSharePoint();
+        }
       });
     }
 
