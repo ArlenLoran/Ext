@@ -119,7 +119,16 @@ export default function App() {
   
   // SharePoint Stats State
   const [spStats, setSpStats] = useState({ analyzed: 0, pending: 0 });
-  const [spFilesList, setSpFilesList] = useState<{ name: string; serverRelativeUrl: string; isValidated: boolean }[]>([]);
+  const [spFilesList, setSpFilesList] = useState<{ 
+    name: string; 
+    serverRelativeUrl: string; 
+    isValidated: boolean;
+    nNF?: string;
+    CNPJ?: string;
+    OS?: string;
+    NCM?: string;
+    xProd?: string;
+  }[]>([]);
   const [isFetchingSpStats, setIsFetchingSpStats] = useState(false);
   const [showSpManager, setShowSpManager] = useState(false);
   const [spManagerSearch, setSpManagerSearch] = useState('');
@@ -181,11 +190,11 @@ export default function App() {
       const files = await listAllXmlFilesFromFolder();
       
       // Fetch history to get metadata for analyzed files
-      let enrichedFiles = files.map(f => ({ ...f, nNF: '', CNPJ: '', OS: '' }));
+      let enrichedFiles = files.map(f => ({ ...f, nNF: '', CNPJ: '', OS: '', NCM: '', xProd: '' }));
       
       try {
         const history = await SharePointListsService.getItems('DHL_FullHistory', {
-          select: ['Title', 'nNF', 'CNPJ', 'OS']
+          select: ['Title', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd']
         });
         
         enrichedFiles = files.map(file => {
@@ -194,7 +203,9 @@ export default function App() {
             ...file,
             nNF: hist?.nNF || '',
             CNPJ: hist?.CNPJ || '',
-            OS: hist?.OS || ''
+            OS: hist?.OS || '',
+            NCM: hist?.NCM || '',
+            xProd: hist?.xProd || ''
           };
         });
       } catch (hError) {
@@ -352,6 +363,8 @@ export default function App() {
         { title: 'nNF', type: 'Text' },
         { title: 'CNPJ', type: 'Text' },
         { title: 'OS', type: 'Text' },
+        { title: 'NCM', type: 'Text' },
+        { title: 'xProd', type: 'Text' },
         { title: 'ServerRelativeUrl', type: 'Text' },
         { title: 'Errors', type: 'Note' },
         { title: 'ValidationDate', type: 'DateTime' }
@@ -364,6 +377,8 @@ export default function App() {
         { title: 'nNF', type: 'Text' },
         { title: 'CNPJ', type: 'Text' },
         { title: 'OS', type: 'Text' },
+        { title: 'NCM', type: 'Text' },
+        { title: 'xProd', type: 'Text' },
         { title: 'UserEmail', type: 'Text' },
         { title: 'Source', type: 'Text' }, // SharePoint / Local
         { title: 'ValidationDate', type: 'DateTime' }
@@ -801,6 +816,8 @@ export default function App() {
               nNF: result?.nNF || '',
               CNPJ: result?.cnpj || '',
               OS: result?.osField || '',
+              NCM: result?.ncm || '',
+              xProd: result?.xProd || '',
               ServerRelativeUrl: newUrl,
               Errors: result?.errors.join('; ') || '',
               ValidationDate: new Date().toISOString()
@@ -917,6 +934,8 @@ export default function App() {
             nNF: res.nNF || '',
             CNPJ: res.cnpj || '',
             OS: res.osField || '',
+            NCM: res.ncm || '',
+            xProd: res.xProd || '',
             UserEmail: userInfo.email || 'Usuário Local',
             Source: res.sharepointUrl ? 'SharePoint' : 'Local',
             ValidationDate: new Date().toISOString()
@@ -2076,7 +2095,7 @@ export default function App() {
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                   <input 
                     type="text"
-                    placeholder="Filtrar por nome..."
+                    placeholder="Filtrar por Nota, CNPJ, NCM, OS ou Produto..."
                     value={spManagerSearch}
                     onChange={(e) => { setSpManagerSearch(e.target.value); setSpManagerPage(1); }}
                     className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-2xl focus:outline-none focus:ring-4 focus:ring-dhl-red/5 transition-all font-medium"
@@ -2087,12 +2106,17 @@ export default function App() {
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {spFilesList
-                    .filter(file => 
-                      file.name.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                      file.nNF?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                      file.CNPJ?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                      file.OS?.toLowerCase().includes(spManagerSearch.toLowerCase())
-                    )
+                    .filter(file => {
+                      const search = spManagerSearch.toLowerCase();
+                      if (!search) return true;
+                      return (
+                        file.nNF?.toLowerCase().includes(search) ||
+                        file.CNPJ?.toLowerCase().includes(search) ||
+                        file.OS?.toLowerCase().includes(search) ||
+                        file.NCM?.toLowerCase().includes(search) ||
+                        file.xProd?.toLowerCase().includes(search)
+                      );
+                    })
                     .slice((spManagerPage - 1) * 12, spManagerPage * 12)
                     .map((file) => (
                       <div key={file.serverRelativeUrl} className="group bg-white border border-gray-100 rounded-2xl p-4 hover:shadow-md transition-all flex items-center justify-between gap-4">
@@ -2114,6 +2138,16 @@ export default function App() {
                               {file.OS && (
                                 <span className="text-[9px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
                                   OS: {file.OS}
+                                </span>
+                              )}
+                              {file.NCM && (
+                                <span className="text-[9px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                                  NCM: {file.NCM}
+                                </span>
+                              )}
+                              {file.xProd && (
+                                <span className="text-[9px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full truncate max-w-[150px]" title={file.xProd}>
+                                  PROD: {file.xProd}
                                 </span>
                               )}
                             </div>
@@ -2151,12 +2185,17 @@ export default function App() {
                       </div>
                     ))}
                   
-                  {spFilesList.filter(file => 
-                    file.name.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                    file.nNF?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                    file.CNPJ?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                    file.OS?.toLowerCase().includes(spManagerSearch.toLowerCase())
-                  ).length === 0 && (
+                  {spFilesList.filter(file => {
+                    const search = spManagerSearch.toLowerCase();
+                    if (!search) return true;
+                    return (
+                      file.nNF?.toLowerCase().includes(search) ||
+                      file.CNPJ?.toLowerCase().includes(search) ||
+                      file.OS?.toLowerCase().includes(search) ||
+                      file.NCM?.toLowerCase().includes(search) ||
+                      file.xProd?.toLowerCase().includes(search)
+                    );
+                  }).length === 0 && (
                     <div className="col-span-full py-20 text-center">
                       <FileSearch size={48} className="mx-auto mb-4 opacity-10 text-gray-400" />
                       <p className="font-black uppercase tracking-widest text-sm italic text-gray-400">Nenhum arquivo encontrado</p>
@@ -2167,17 +2206,27 @@ export default function App() {
 
               <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 italic">
-                  Mostrando {Math.min(spFilesList.filter(f => 
-                    f.name.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                    f.nNF?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                    f.CNPJ?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                    f.OS?.toLowerCase().includes(spManagerSearch.toLowerCase())
-                  ).length, 12)} de {spFilesList.filter(f => 
-                    f.name.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                    f.nNF?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                    f.CNPJ?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                    f.OS?.toLowerCase().includes(spManagerSearch.toLowerCase())
-                  ).length} arquivos
+                  Mostrando {Math.min(spFilesList.filter(file => {
+                    const search = spManagerSearch.toLowerCase();
+                    if (!search) return true;
+                    return (
+                      file.nNF?.toLowerCase().includes(search) ||
+                      file.CNPJ?.toLowerCase().includes(search) ||
+                      file.OS?.toLowerCase().includes(search) ||
+                      file.NCM?.toLowerCase().includes(search) ||
+                      file.xProd?.toLowerCase().includes(search)
+                    );
+                  }).length, 12)} de {spFilesList.filter(file => {
+                    const search = spManagerSearch.toLowerCase();
+                    if (!search) return true;
+                    return (
+                      file.nNF?.toLowerCase().includes(search) ||
+                      file.CNPJ?.toLowerCase().includes(search) ||
+                      file.OS?.toLowerCase().includes(search) ||
+                      file.NCM?.toLowerCase().includes(search) ||
+                      file.xProd?.toLowerCase().includes(search)
+                    );
+                  }).length} arquivos
                 </p>
                 <div className="flex items-center gap-2">
                   <button 
@@ -2192,12 +2241,17 @@ export default function App() {
                   </span>
                   <button 
                     onClick={() => setSpManagerPage(prev => prev + 1)}
-                    disabled={spManagerPage * 12 >= spFilesList.filter(f => 
-                      f.name.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                      f.nNF?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                      f.CNPJ?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
-                      f.OS?.toLowerCase().includes(spManagerSearch.toLowerCase())
-                    ).length}
+                    disabled={spManagerPage * 12 >= spFilesList.filter(file => {
+                      const search = spManagerSearch.toLowerCase();
+                      if (!search) return true;
+                      return (
+                        file.nNF?.toLowerCase().includes(search) ||
+                        file.CNPJ?.toLowerCase().includes(search) ||
+                        file.OS?.toLowerCase().includes(search) ||
+                        file.NCM?.toLowerCase().includes(search) ||
+                        file.xProd?.toLowerCase().includes(search)
+                      );
+                    }).length}
                     className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-30 transition-all"
                   >
                     <ChevronRight size={20} />
