@@ -191,35 +191,38 @@ export default function App() {
     const xmlDoc = parser.parseFromString(xmlText, "text/xml");
     
     const getTagValue = (tagName: string, parentPath?: string[]) => {
+      let current: Element | null = xmlDoc.documentElement;
+      
       if (parentPath && parentPath.length > 0) {
-        let currentNodes: Element[] = [xmlDoc.documentElement];
-        
         for (const pTag of parentPath) {
-          const nextNodes: Element[] = [];
-          for (const node of currentNodes) {
-            const children = node.getElementsByTagName("*");
-            for (let i = 0; i < children.length; i++) {
-              if (children[i].tagName.toLowerCase() === pTag.toLowerCase()) {
-                nextNodes.push(children[i]);
-              }
-            }
-          }
-          currentNodes = nextNodes;
-          if (currentNodes.length === 0) break;
-        }
-
-        if (currentNodes.length > 0) {
-          for (const node of currentNodes) {
-            const children = node.getElementsByTagName("*");
-            for (let i = 0; i < children.length; i++) {
-              if (children[i].tagName.toLowerCase() === tagName.toLowerCase()) {
-                return children[i].textContent?.trim() || "";
-              }
-            }
+          if (!current) break;
+          // Scoped search for the next path segment
+          const found = Array.from(current.getElementsByTagName("*")).find(el => 
+            el.tagName.toLowerCase() === pTag.toLowerCase() && 
+            (el.parentNode === current || el.parentNode?.parentNode === current)
+          );
+          if (found) {
+            current = found;
+          } else {
+            current = null;
           }
         }
       }
 
+      if (current) {
+        const target = Array.from(current.getElementsByTagName("*")).find(el => 
+          el.tagName.toLowerCase() === tagName.toLowerCase() &&
+          (el.parentNode === current || el.parentNode?.parentNode === current)
+        );
+        if (target) {
+          return target.textContent?.trim() || "";
+        }
+      }
+
+      // If a path was specified and we got here, it means it wasn't found in that path
+      if (parentPath && parentPath.length > 0) return "";
+
+      // Global search only as a last resort if no path was specified
       const allElements = xmlDoc.getElementsByTagName("*");
       for (let i = 0; i < allElements.length; i++) {
         if (allElements[i].tagName.toLowerCase() === tagName.toLowerCase()) {
