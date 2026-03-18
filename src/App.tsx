@@ -123,6 +123,7 @@ export default function App() {
     name: string; 
     serverRelativeUrl: string; 
     isValidated: boolean;
+    timeCreated: string;
     nNF?: string;
     CNPJ?: string;
     OS?: string;
@@ -2220,6 +2221,10 @@ export default function App() {
                             <div className="flex flex-wrap items-center gap-2 mt-1">
                               <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${file.isValidated ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
                                 {file.isValidated ? 'Analisado' : 'Pendente'}
+                              </span>
+                              <span className="text-[9px] font-bold text-gray-400 bg-gray-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <Calendar size={10} />
+                                {new Date(file.timeCreated).toLocaleDateString('pt-BR')} {new Date(file.timeCreated).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                               </span>
                               {file.nNF && (
                                 <span className="text-[9px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">

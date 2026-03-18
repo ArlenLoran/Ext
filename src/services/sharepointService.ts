@@ -86,9 +86,9 @@ export async function downloadFileFromSharePoint(serverRelativeUrl: string, file
   return response.blob();
 }
 
-export async function listAllXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'): Promise<{ name: string; serverRelativeUrl: string; isValidated: boolean }[]> {
+export async function listAllXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'): Promise<{ name: string; serverRelativeUrl: string; isValidated: boolean; timeCreated: string }[]> {
   const folderServerRelativeUrl = normalizeFolderServerRelativeUrl(folderPath);
-  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFolderByServerRelativeUrl('${escapeODataString(folderServerRelativeUrl)}')/Files?$select=Name,ServerRelativeUrl&$orderby=Name asc`;
+  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFolderByServerRelativeUrl('${escapeODataString(folderServerRelativeUrl)}')/Files?$select=Name,ServerRelativeUrl,TimeCreated&$orderby=Name asc`;
 
   const response = await fetch(endpoint, {
     method: 'GET',
@@ -102,14 +102,15 @@ export async function listAllXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'):
   }
 
   const data = await response.json();
-  const files = (data?.d?.results || []) as Array<{ Name: string; ServerRelativeUrl: string }>;
+  const files = (data?.d?.results || []) as Array<{ Name: string; ServerRelativeUrl: string; TimeCreated: string }>;
   
   return files
     .filter((item) => /\.xml$/i.test(item.Name))
     .map(item => ({
       name: item.Name,
       serverRelativeUrl: item.ServerRelativeUrl,
-      isValidated: /validado\.xml$/i.test(item.Name)
+      isValidated: /validado\.xml$/i.test(item.Name),
+      timeCreated: item.TimeCreated
     }));
 }
 
