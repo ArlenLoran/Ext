@@ -86,6 +86,33 @@ export async function downloadFileFromSharePoint(serverRelativeUrl: string, file
   return response.blob();
 }
 
+export async function listAllXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'): Promise<{ name: string; serverRelativeUrl: string; isValidated: boolean }[]> {
+  const folderServerRelativeUrl = normalizeFolderServerRelativeUrl(folderPath);
+  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFolderByServerRelativeUrl('${escapeODataString(folderServerRelativeUrl)}')/Files?$select=Name,ServerRelativeUrl&$orderby=Name asc`;
+
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers: { Accept: 'application/json; odata=verbose' },
+    credentials: 'same-origin'
+  });
+
+  if (!response.ok) {
+    const message = await response.text().catch(() => '');
+    throw new Error(message || 'Não foi possível consultar a pasta de XMLs no SharePoint.');
+  }
+
+  const data = await response.json();
+  const files = (data?.d?.results || []) as Array<{ Name: string; ServerRelativeUrl: string }>;
+  
+  return files
+    .filter((item) => /\.xml$/i.test(item.Name))
+    .map(item => ({
+      name: item.Name,
+      serverRelativeUrl: item.ServerRelativeUrl,
+      isValidated: /validado\.xml$/i.test(item.Name)
+    }));
+}
+
 export async function listXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'): Promise<SharePointXmlFile[]> {
   const folderServerRelativeUrl = normalizeFolderServerRelativeUrl(folderPath);
   const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFolderByServerRelativeUrl('${escapeODataString(folderServerRelativeUrl)}')/Files?$select=Name,ServerRelativeUrl&$orderby=Name asc`;

@@ -31,10 +31,12 @@ import {
   RotateCcw,
   Clock,
   Calendar,
-  Download
+  Download,
+  ArrowRight,
+  RefreshCw
 } from 'lucide-react';
 import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtml } from './services/emailService';
-import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation, downloadFileFromSharePoint } from './services/sharepointService';
+import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation, downloadFileFromSharePoint, listAllXmlFilesFromFolder } from './services/sharepointService';
 import { SharePointListsService } from './services/sharepointLists';
 
 interface ValidationResult {
@@ -104,6 +106,14 @@ export default function App() {
   const [fullHistoryPage, setFullHistoryPage] = useState(1);
   const [fullHistoryStartDate, setFullHistoryStartDate] = useState('');
   const [fullHistoryEndDate, setFullHistoryEndDate] = useState('');
+  
+  // SharePoint Stats State
+  const [spStats, setSpStats] = useState({ analyzed: 0, pending: 0 });
+  const [spFilesList, setSpFilesList] = useState<{ name: string; serverRelativeUrl: string; isValidated: boolean }[]>([]);
+  const [isFetchingSpStats, setIsFetchingSpStats] = useState(false);
+  const [showSpManager, setShowSpManager] = useState(false);
+  const [spManagerSearch, setSpManagerSearch] = useState('');
+  const [spManagerPage, setSpManagerPage] = useState(1);
 
   // Validation Rules State
   const [mandatoryTags, setMandatoryTags] = useState<{ name: string, tag: string }[]>(() => {
@@ -147,8 +157,50 @@ export default function App() {
     setIsSpAvailable(available);
     if (available) {
       checkSpInitialization();
+      fetchSpStats();
+      // Refresh stats every 5 minutes
+      const interval = setInterval(fetchSpStats, 5 * 60 * 1000);
+      return () => clearInterval(interval);
     }
   }, []);
+
+  const fetchSpStats = async () => {
+    if (!SharePointListsService.isContextAvailable()) return;
+    try {
+      setIsFetchingSpStats(true);
+      const files = await listAllXmlFilesFromFolder();
+      
+      // Fetch history to get metadata for analyzed files
+      let enrichedFiles = files.map(f => ({ ...f, nNF: '', CNPJ: '', OS: '' }));
+      
+      try {
+        const history = await SharePointListsService.getItems('DHL_FullHistory', {
+          select: ['Title', 'nNF', 'CNPJ', 'OS']
+        });
+        
+        enrichedFiles = files.map(file => {
+          const hist = history.find(h => h.Title === file.name);
+          return {
+            ...file,
+            nNF: hist?.nNF || '',
+            CNPJ: hist?.CNPJ || '',
+            OS: hist?.OS || ''
+          };
+        });
+      } catch (hError) {
+        console.warn('Histórico ainda não disponível para enriquecimento de estatísticas.');
+      }
+
+      setSpFilesList(enrichedFiles);
+      const analyzedCount = enrichedFiles.filter(f => f.isValidated).length;
+      const pendingCount = enrichedFiles.length - analyzedCount;
+      setSpStats({ analyzed: analyzedCount, pending: pendingCount });
+    } catch (error) {
+      console.error('Erro ao buscar estatísticas do SharePoint:', error);
+    } finally {
+      setIsFetchingSpStats(false);
+    }
+  };
 
   const checkSpInitialization = async () => {
     try {
@@ -289,6 +341,7 @@ export default function App() {
         { title: 'Status', type: 'Text', required: true },
         { title: 'nNF', type: 'Text' },
         { title: 'CNPJ', type: 'Text' },
+        { title: 'OS', type: 'Text' },
         { title: 'ServerRelativeUrl', type: 'Text' },
         { title: 'Errors', type: 'Note' },
         { title: 'ValidationDate', type: 'DateTime' }
@@ -300,6 +353,7 @@ export default function App() {
         { title: 'Status', type: 'Text', required: true },
         { title: 'nNF', type: 'Text' },
         { title: 'CNPJ', type: 'Text' },
+        { title: 'OS', type: 'Text' },
         { title: 'UserEmail', type: 'Text' },
         { title: 'Source', type: 'Text' }, // SharePoint / Local
         { title: 'ValidationDate', type: 'DateTime' }
@@ -725,6 +779,7 @@ export default function App() {
               Status: result?.isValid ? 'Validado' : 'Erro',
               nNF: result?.nNF || '',
               CNPJ: result?.cnpj || '',
+              OS: result?.osField || '',
               ServerRelativeUrl: newUrl,
               Errors: result?.errors.join('; ') || '',
               ValidationDate: new Date().toISOString()
@@ -840,6 +895,7 @@ export default function App() {
             Status: res.isValid ? 'Válido' : 'Inválido',
             nNF: res.nNF || '',
             CNPJ: res.cnpj || '',
+            OS: res.osField || '',
             UserEmail: userInfo.email || 'Usuário Local',
             Source: res.sharepointUrl ? 'SharePoint' : 'Local',
             ValidationDate: new Date().toISOString()
@@ -902,6 +958,35 @@ export default function App() {
     } catch (error) {
       console.error(error);
       setNotification({ type: 'error', message: 'Erro ao baixar arquivo do SharePoint.' });
+    }
+  };
+
+  const validateSpFileManually = async (spFile: { name: string; serverRelativeUrl: string }) => {
+    try {
+      setNotification({ type: 'success', message: `Importando ${spFile.name}...` });
+      const blob = await downloadFileFromSharePoint(spFile.serverRelativeUrl, spFile.name);
+      const file = new File([blob], spFile.name, { type: 'text/xml' });
+      
+      const spUrlMap = { [spFile.name]: spFile.serverRelativeUrl };
+      await handleFiles([file], spUrlMap);
+      
+      setShowSpManager(false);
+      setNotification({ type: 'success', message: 'Arquivo importado para validação!' });
+      fetchSpStats(); // Refresh stats
+    } catch (error) {
+      console.error(error);
+      setNotification({ type: 'error', message: 'Erro ao importar arquivo do SharePoint.' });
+    }
+  };
+
+  const handleRevertSpFile = async (spFile: { name: string; serverRelativeUrl: string }) => {
+    try {
+      await revertXmlFileValidation(spFile.serverRelativeUrl);
+      setNotification({ type: 'success', message: 'Validação revertida com sucesso!' });
+      fetchSpStats(); // Refresh stats
+    } catch (error) {
+      console.error(error);
+      setNotification({ type: 'error', message: 'Erro ao reverter validação.' });
     }
   };
 
@@ -995,6 +1080,28 @@ export default function App() {
                       {results.filter(r => r.errors.length > 0).length} ERROS
                     </span>
                   </div>
+                  {isSpAvailable && (
+                    <>
+                      <button 
+                        onClick={() => setShowSpManager(true)}
+                        className="flex items-center gap-1.5 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 hover:bg-blue-100 transition-colors"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                        <span className="text-[9px] font-black text-blue-700 uppercase tracking-widest flex items-center gap-1">
+                          {spStats.analyzed} Analisados <ChevronRight size={8} />
+                        </span>
+                      </button>
+                      <button 
+                        onClick={() => setShowSpManager(true)}
+                        className="flex items-center gap-1.5 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-100 hover:bg-orange-100 transition-colors"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                        <span className="text-[9px] font-black text-orange-700 uppercase tracking-widest flex items-center gap-1">
+                          {spStats.pending} Pendentes <ChevronRight size={8} />
+                        </span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -1756,6 +1863,193 @@ export default function App() {
         </section>
       </main>
       
+      {/* SharePoint Manager Modal */}
+      <AnimatePresence>
+        {showSpManager && (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-5xl max-h-[90vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+            >
+              <div className="p-6 bg-dhl-dark text-white flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="bg-dhl-yellow p-3 rounded-2xl shadow-lg">
+                    <FileSearch size={24} className="text-dhl-dark" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-black tracking-tighter italic uppercase leading-none">Gerenciador SharePoint</h2>
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Pasta: SiteAssets/XMLs</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-4 bg-white/10 px-4 py-2 rounded-xl border border-white/10">
+                    <div className="flex flex-col items-center">
+                      <span className="text-lg font-black text-blue-400">{spStats.analyzed}</span>
+                      <span className="text-[8px] font-bold uppercase tracking-widest opacity-60">Analisados</span>
+                    </div>
+                    <div className="w-px h-6 bg-white/10" />
+                    <div className="flex flex-col items-center">
+                      <span className="text-lg font-black text-orange-400">{spStats.pending}</span>
+                      <span className="text-[8px] font-bold uppercase tracking-widest opacity-60">Pendentes</span>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={fetchSpStats}
+                    disabled={isFetchingSpStats}
+                    className="p-3 bg-white/10 hover:bg-white/20 rounded-xl transition-all disabled:opacity-50"
+                    title="Atualizar lista"
+                  >
+                    <RefreshCw size={20} className={isFetchingSpStats ? 'animate-spin' : ''} />
+                  </button>
+                  <button 
+                    onClick={() => setShowSpManager(false)}
+                    className="p-3 bg-white/10 hover:bg-dhl-red rounded-xl transition-all"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex flex-col md:flex-row gap-4 items-center justify-between">
+                <div className="relative flex-1 w-full">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                  <input 
+                    type="text"
+                    placeholder="Filtrar por nome..."
+                    value={spManagerSearch}
+                    onChange={(e) => { setSpManagerSearch(e.target.value); setSpManagerPage(1); }}
+                    className="w-full pl-12 pr-4 py-3 bg-white border border-gray-200 rounded-2xl focus:outline-none focus:ring-4 focus:ring-dhl-red/5 transition-all font-medium"
+                  />
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {spFilesList
+                    .filter(file => 
+                      file.name.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                      file.nNF?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                      file.CNPJ?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                      file.OS?.toLowerCase().includes(spManagerSearch.toLowerCase())
+                    )
+                    .slice((spManagerPage - 1) * 12, spManagerPage * 12)
+                    .map((file) => (
+                      <div key={file.serverRelativeUrl} className="group bg-white border border-gray-100 rounded-2xl p-4 hover:shadow-md transition-all flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-4 flex-1 min-w-0">
+                          <div className={`p-3 rounded-xl ${file.isValidated ? 'bg-blue-50 text-blue-600' : 'bg-orange-50 text-orange-600'}`}>
+                            {file.isValidated ? <CheckCircle2 size={20} /> : <Clock size={20} />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <h4 className="font-bold text-dhl-dark truncate text-sm" title={file.name}>{file.name}</h4>
+                            <div className="flex flex-wrap items-center gap-2 mt-1">
+                              <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${file.isValidated ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                                {file.isValidated ? 'Analisado' : 'Pendente'}
+                              </span>
+                              {file.nNF && (
+                                <span className="text-[9px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                                  NF: {file.nNF}
+                                </span>
+                              )}
+                              {file.OS && (
+                                <span className="text-[9px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                                  OS: {file.OS}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => downloadFromSharePoint(file.serverRelativeUrl, file.name)}
+                            className="p-2 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-lg transition-all border border-transparent hover:border-gray-200"
+                            title="Baixar XML"
+                          >
+                            <Download size={16} />
+                          </button>
+                          {file.isValidated ? (
+                            <button
+                              onClick={() => handleRevertSpFile(file)}
+                              className="px-3 py-2 bg-gray-50 hover:bg-orange-50 text-orange-600 rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all border border-transparent hover:border-orange-100"
+                              title="Reverter validação"
+                            >
+                              <RotateCcw size={14} />
+                              Reverter
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => validateSpFileManually(file)}
+                              className="px-3 py-2 bg-dhl-dark hover:bg-black text-white rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all"
+                              title="Enviar para validação"
+                            >
+                              <ArrowRight size={14} />
+                              Validar
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  
+                  {spFilesList.filter(file => 
+                    file.name.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                    file.nNF?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                    file.CNPJ?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                    file.OS?.toLowerCase().includes(spManagerSearch.toLowerCase())
+                  ).length === 0 && (
+                    <div className="col-span-full py-20 text-center">
+                      <FileSearch size={48} className="mx-auto mb-4 opacity-10 text-gray-400" />
+                      <p className="font-black uppercase tracking-widest text-sm italic text-gray-400">Nenhum arquivo encontrado</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
+                <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 italic">
+                  Mostrando {Math.min(spFilesList.filter(f => 
+                    f.name.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                    f.nNF?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                    f.CNPJ?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                    f.OS?.toLowerCase().includes(spManagerSearch.toLowerCase())
+                  ).length, 12)} de {spFilesList.filter(f => 
+                    f.name.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                    f.nNF?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                    f.CNPJ?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                    f.OS?.toLowerCase().includes(spManagerSearch.toLowerCase())
+                  ).length} arquivos
+                </p>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setSpManagerPage(prev => Math.max(1, prev - 1))}
+                    disabled={spManagerPage === 1}
+                    className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-30 transition-all"
+                  >
+                    <ChevronLeft size={20} />
+                  </button>
+                  <span className="text-xs font-black text-dhl-dark bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-200">
+                    Página {spManagerPage}
+                  </span>
+                  <button 
+                    onClick={() => setSpManagerPage(prev => prev + 1)}
+                    disabled={spManagerPage * 12 >= spFilesList.filter(f => 
+                      f.name.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                      f.nNF?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                      f.CNPJ?.toLowerCase().includes(spManagerSearch.toLowerCase()) ||
+                      f.OS?.toLowerCase().includes(spManagerSearch.toLowerCase())
+                    ).length}
+                    className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-30 transition-all"
+                  >
+                    <ChevronRight size={20} />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Revalidation Modal (formerly History) */}
       <AnimatePresence>
         {showRevalidation && (
