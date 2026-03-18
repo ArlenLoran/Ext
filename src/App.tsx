@@ -137,6 +137,36 @@ export default function App() {
   const [spManagerStartDate, setSpManagerStartDate] = useState('');
   const [spManagerEndDate, setSpManagerEndDate] = useState('');
 
+  const filteredSpFiles = React.useMemo(() => {
+    return spFilesList.filter(file => {
+      // Date Range Filter
+      if (spManagerStartDate) {
+        const fileDate = new Date(file.timeCreated);
+        const startDate = new Date(spManagerStartDate);
+        startDate.setHours(0, 0, 0, 0);
+        if (fileDate < startDate) return false;
+      }
+      
+      if (spManagerEndDate) {
+        const fileDate = new Date(file.timeCreated);
+        const endDate = new Date(spManagerEndDate);
+        endDate.setHours(23, 59, 59, 999);
+        if (fileDate > endDate) return false;
+      }
+
+      const search = spManagerSearch.toLowerCase();
+      if (!search) return true;
+      return (
+        file.name.toLowerCase().includes(search) ||
+        file.nNF?.toLowerCase().includes(search) ||
+        file.CNPJ?.toLowerCase().includes(search) ||
+        file.OS?.toLowerCase().includes(search) ||
+        file.NCM?.toLowerCase().includes(search) ||
+        file.xProd?.toLowerCase().includes(search)
+      );
+    });
+  }, [spFilesList, spManagerSearch, spManagerStartDate, spManagerEndDate]);
+
   // Validation Rules State
   const [mandatoryTags, setMandatoryTags] = useState<{ name: string, tag: string }[]>(() => {
     const saved = localStorage.getItem('dhl_mandatory_tags');
@@ -281,7 +311,9 @@ export default function App() {
         });
         
         enrichedFiles = files.map(file => {
-          const hist = history.find(h => h.Title === file.name);
+          // Look for original name or renamed name in history
+          const originalName = file.name.replace(/\svalidado\.xml$/i, '.xml');
+          const hist = history.find(h => h.Title === file.name || h.Title === originalName);
           return {
             ...file,
             nNF: hist?.nNF || '',
@@ -2288,33 +2320,7 @@ export default function App() {
 
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {spFilesList
-                    .filter(file => {
-                      // Date Range Filter
-                      if (spManagerStartDate) {
-                        const fileDate = new Date(file.timeCreated);
-                        const startDate = new Date(spManagerStartDate);
-                        startDate.setHours(0, 0, 0, 0);
-                        if (fileDate < startDate) return false;
-                      }
-                      
-                      if (spManagerEndDate) {
-                        const fileDate = new Date(file.timeCreated);
-                        const endDate = new Date(spManagerEndDate);
-                        endDate.setHours(23, 59, 59, 999);
-                        if (fileDate > endDate) return false;
-                      }
-
-                      const search = spManagerSearch.toLowerCase();
-                      if (!search) return true;
-                      return (
-                        file.nNF?.toLowerCase().includes(search) ||
-                        file.CNPJ?.toLowerCase().includes(search) ||
-                        file.OS?.toLowerCase().includes(search) ||
-                        file.NCM?.toLowerCase().includes(search) ||
-                        file.xProd?.toLowerCase().includes(search)
-                      );
-                    })
+                  {filteredSpFiles
                     .slice((spManagerPage - 1) * 12, spManagerPage * 12)
                     .map((file) => (
                       <div key={file.serverRelativeUrl} className="group bg-white border border-gray-100 rounded-2xl p-4 hover:shadow-md transition-all flex items-center justify-between gap-4">
@@ -2387,32 +2393,7 @@ export default function App() {
                       </div>
                     ))}
                   
-                  {spFilesList.filter(file => {
-                    // Date Range Filter
-                    if (spManagerStartDate) {
-                      const fileDate = new Date(file.timeCreated);
-                      const startDate = new Date(spManagerStartDate);
-                      startDate.setHours(0, 0, 0, 0);
-                      if (fileDate < startDate) return false;
-                    }
-                    
-                    if (spManagerEndDate) {
-                      const fileDate = new Date(file.timeCreated);
-                      const endDate = new Date(spManagerEndDate);
-                      endDate.setHours(23, 59, 59, 999);
-                      if (fileDate > endDate) return false;
-                    }
-
-                    const search = spManagerSearch.toLowerCase();
-                    if (!search) return true;
-                    return (
-                      file.nNF?.toLowerCase().includes(search) ||
-                      file.CNPJ?.toLowerCase().includes(search) ||
-                      file.OS?.toLowerCase().includes(search) ||
-                      file.NCM?.toLowerCase().includes(search) ||
-                      file.xProd?.toLowerCase().includes(search)
-                    );
-                  }).length === 0 && (
+                  {filteredSpFiles.length === 0 && (
                     <div className="col-span-full py-20 text-center">
                       <FileSearch size={48} className="mx-auto mb-4 opacity-10 text-gray-400" />
                       <p className="font-black uppercase tracking-widest text-sm italic text-gray-400">Nenhum arquivo encontrado</p>
@@ -2423,57 +2404,7 @@ export default function App() {
 
               <div className="p-6 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
                 <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 italic">
-                  Mostrando {Math.min(spFilesList.filter(file => {
-                    // Date Range Filter
-                    if (spManagerStartDate) {
-                      const fileDate = new Date(file.timeCreated);
-                      const startDate = new Date(spManagerStartDate);
-                      startDate.setHours(0, 0, 0, 0);
-                      if (fileDate < startDate) return false;
-                    }
-                    
-                    if (spManagerEndDate) {
-                      const fileDate = new Date(file.timeCreated);
-                      const endDate = new Date(spManagerEndDate);
-                      endDate.setHours(23, 59, 59, 999);
-                      if (fileDate > endDate) return false;
-                    }
-
-                    const search = spManagerSearch.toLowerCase();
-                    if (!search) return true;
-                    return (
-                      file.nNF?.toLowerCase().includes(search) ||
-                      file.CNPJ?.toLowerCase().includes(search) ||
-                      file.OS?.toLowerCase().includes(search) ||
-                      file.NCM?.toLowerCase().includes(search) ||
-                      file.xProd?.toLowerCase().includes(search)
-                    );
-                  }).length, 12)} de {spFilesList.filter(file => {
-                    // Date Range Filter
-                    if (spManagerStartDate) {
-                      const fileDate = new Date(file.timeCreated);
-                      const startDate = new Date(spManagerStartDate);
-                      startDate.setHours(0, 0, 0, 0);
-                      if (fileDate < startDate) return false;
-                    }
-                    
-                    if (spManagerEndDate) {
-                      const fileDate = new Date(file.timeCreated);
-                      const endDate = new Date(spManagerEndDate);
-                      endDate.setHours(23, 59, 59, 999);
-                      if (fileDate > endDate) return false;
-                    }
-
-                    const search = spManagerSearch.toLowerCase();
-                    if (!search) return true;
-                    return (
-                      file.nNF?.toLowerCase().includes(search) ||
-                      file.CNPJ?.toLowerCase().includes(search) ||
-                      file.OS?.toLowerCase().includes(search) ||
-                      file.NCM?.toLowerCase().includes(search) ||
-                      file.xProd?.toLowerCase().includes(search)
-                    );
-                  }).length} arquivos
+                  Mostrando {Math.min(filteredSpFiles.length, 12)} de {filteredSpFiles.length} arquivos
                 </p>
                 <div className="flex items-center gap-2">
                   <button 
@@ -2488,32 +2419,7 @@ export default function App() {
                   </span>
                   <button 
                     onClick={() => setSpManagerPage(prev => prev + 1)}
-                    disabled={spManagerPage * 12 >= spFilesList.filter(file => {
-                      // Date Range Filter
-                      if (spManagerStartDate) {
-                        const fileDate = new Date(file.timeCreated);
-                        const startDate = new Date(spManagerStartDate);
-                        startDate.setHours(0, 0, 0, 0);
-                        if (fileDate < startDate) return false;
-                      }
-                      
-                      if (spManagerEndDate) {
-                        const fileDate = new Date(file.timeCreated);
-                        const endDate = new Date(spManagerEndDate);
-                        endDate.setHours(23, 59, 59, 999);
-                        if (fileDate > endDate) return false;
-                      }
-
-                      const search = spManagerSearch.toLowerCase();
-                      if (!search) return true;
-                      return (
-                        file.nNF?.toLowerCase().includes(search) ||
-                        file.CNPJ?.toLowerCase().includes(search) ||
-                        file.OS?.toLowerCase().includes(search) ||
-                        file.NCM?.toLowerCase().includes(search) ||
-                        file.xProd?.toLowerCase().includes(search)
-                      );
-                    }).length}
+                    disabled={spManagerPage * 12 >= filteredSpFiles.length}
                     className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-30 transition-all"
                   >
                     <ChevronRight size={20} />
