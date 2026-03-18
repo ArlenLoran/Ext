@@ -1056,6 +1056,45 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {/* SharePoint Live Monitor Bar */}
+        {isSpAvailable && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex items-center justify-between bg-white/50 backdrop-blur-sm border border-gray-100 px-6 py-3 rounded-2xl shadow-sm"
+          >
+            <div className="flex items-center gap-8">
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <div className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                  <div className="absolute inset-0 w-2.5 h-2.5 rounded-full bg-blue-500 animate-ping opacity-75" />
+                </div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">Monitor SharePoint</span>
+              </div>
+              
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black text-blue-600">{spStats.analyzed}</span>
+                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tight">Analisados</span>
+                </div>
+                <div className="w-px h-4 bg-gray-200" />
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-black text-orange-500">{spStats.pending}</span>
+                  <span className="text-[9px] font-bold text-gray-400 uppercase tracking-tight">Pendentes</span>
+                </div>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setShowSpManager(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 border border-gray-200 rounded-xl transition-all group shadow-sm"
+            >
+              <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 group-hover:text-dhl-dark">Gerenciar Pasta</span>
+              <ChevronRight size={14} className="text-gray-400 group-hover:text-dhl-red transition-colors" />
+            </button>
+          </motion.div>
+        )}
+
         {/* Hero / Upload Section */}
         <section className="space-y-4">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -1080,28 +1119,6 @@ export default function App() {
                       {results.filter(r => r.errors.length > 0).length} ERROS
                     </span>
                   </div>
-                  {isSpAvailable && (
-                    <>
-                      <button 
-                        onClick={() => setShowSpManager(true)}
-                        className="flex items-center gap-1.5 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100 hover:bg-blue-100 transition-colors"
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                        <span className="text-[9px] font-black text-blue-700 uppercase tracking-widest flex items-center gap-1">
-                          {spStats.analyzed} Analisados <ChevronRight size={8} />
-                        </span>
-                      </button>
-                      <button 
-                        onClick={() => setShowSpManager(true)}
-                        className="flex items-center gap-1.5 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-100 hover:bg-orange-100 transition-colors"
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
-                        <span className="text-[9px] font-black text-orange-700 uppercase tracking-widest flex items-center gap-1">
-                          {spStats.pending} Pendentes <ChevronRight size={8} />
-                        </span>
-                      </button>
-                    </>
-                  )}
                 </div>
               </div>
             </div>
