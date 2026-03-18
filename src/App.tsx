@@ -29,7 +29,8 @@ import {
   ChevronRight,
   History,
   RotateCcw,
-  Clock
+  Clock,
+  Calendar
 } from 'lucide-react';
 import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtml } from './services/emailService';
 import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation } from './services/sharepointService';
@@ -91,6 +92,8 @@ export default function App() {
   const [isFetchingRevalidation, setIsFetchingRevalidation] = useState(false);
   const [revalidationSearch, setRevalidationSearch] = useState('');
   const [revalidationPage, setRevalidationPage] = useState(1);
+  const [revalidationStartDate, setRevalidationStartDate] = useState('');
+  const [revalidationEndDate, setRevalidationEndDate] = useState('');
 
   // Full History State
   const [fullHistory, setFullHistory] = useState<any[]>([]);
@@ -98,6 +101,8 @@ export default function App() {
   const [isFetchingFullHistory, setIsFetchingFullHistory] = useState(false);
   const [fullHistorySearch, setFullHistorySearch] = useState('');
   const [fullHistoryPage, setFullHistoryPage] = useState(1);
+  const [fullHistoryStartDate, setFullHistoryStartDate] = useState('');
+  const [fullHistoryEndDate, setFullHistoryEndDate] = useState('');
 
   // Validation Rules State
   const [mandatoryTags, setMandatoryTags] = useState<{ name: string, tag: string }[]>(() => {
@@ -155,25 +160,49 @@ export default function App() {
       if (recExists && tagExists && patExists && revalExists && histExists) {
         setIsSpInitialized(true);
         loadDataFromSharePoint();
-        loadRevalidationFromSharePoint();
-        loadFullHistoryFromSharePoint();
       }
     } catch (error) {
       console.error('Erro ao verificar inicialização do SharePoint:', error);
     }
   };
 
+  const validateDateRange = (start: string, end: string) => {
+    if (!start || !end) return { valid: false, message: 'Selecione as datas de início e fim.' };
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+    const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (startDate > endDate) return { valid: false, message: 'A data de início não pode ser maior que a data de fim.' };
+    if (diffDays > 30) return { valid: false, message: 'O intervalo máximo permitido é de 30 dias.' };
+    
+    return { valid: true, message: '' };
+  };
+
   const loadRevalidationFromSharePoint = async () => {
     if (!SharePointListsService.isContextAvailable()) return;
+    
+    const validation = validateDateRange(revalidationStartDate, revalidationEndDate);
+    if (!validation.valid) {
+      setNotification({ type: 'error', message: validation.message });
+      return;
+    }
+
     setIsFetchingRevalidation(true);
     try {
+      const filter = `Created ge datetime'${revalidationStartDate}T00:00:00Z' and Created le datetime'${revalidationEndDate}T23:59:59Z'`;
       const items = await SharePointListsService.getItems('DHL_ValidationHistory', {
         orderBy: 'Id desc',
-        top: 500
+        top: 2000,
+        filter
       });
       setRevalidationItems(items);
+      if (items.length === 0) {
+        setNotification({ type: 'success', message: 'Nenhum registro encontrado para este período.' });
+      }
     } catch (error) {
       console.error('Erro ao carregar revalidação:', error);
+      setNotification({ type: 'error', message: 'Erro ao carregar dados do SharePoint.' });
     } finally {
       setIsFetchingRevalidation(false);
     }
@@ -181,15 +210,28 @@ export default function App() {
 
   const loadFullHistoryFromSharePoint = async () => {
     if (!SharePointListsService.isContextAvailable()) return;
+
+    const validation = validateDateRange(fullHistoryStartDate, fullHistoryEndDate);
+    if (!validation.valid) {
+      setNotification({ type: 'error', message: validation.message });
+      return;
+    }
+
     setIsFetchingFullHistory(true);
     try {
+      const filter = `Created ge datetime'${fullHistoryStartDate}T00:00:00Z' and Created le datetime'${fullHistoryEndDate}T23:59:59Z'`;
       const items = await SharePointListsService.getItems('DHL_FullHistory', {
         orderBy: 'Id desc',
-        top: 500
+        top: 5000,
+        filter
       });
       setFullHistory(items);
+      if (items.length === 0) {
+        setNotification({ type: 'success', message: 'Nenhum registro encontrado para este período.' });
+      }
     } catch (error) {
       console.error('Erro ao carregar histórico:', error);
+      setNotification({ type: 'error', message: 'Erro ao carregar dados do SharePoint.' });
     } finally {
       setIsFetchingFullHistory(false);
     }
@@ -686,7 +728,7 @@ export default function App() {
               Errors: result?.errors.join('; ') || '',
               ValidationDate: new Date().toISOString()
             });
-            loadRevalidationFromSharePoint();
+            // No automatic refresh as per user request
           }
 
           // Update the local state with the new URL for this file
@@ -805,9 +847,7 @@ export default function App() {
           console.error('Erro ao logar no histórico completo:', err);
         }
       })).then(() => {
-        if (isSpInitialized) {
-          loadFullHistoryFromSharePoint();
-        }
+        // No automatic refresh as per user request
       });
     }
 
@@ -851,8 +891,7 @@ export default function App() {
       
       setNotification({ type: 'success', message: `Validação do arquivo ${historyItem.Title} revertida com sucesso!` });
       
-      // 3. Refresh history
-      await loadRevalidationFromSharePoint();
+      // No automatic refresh as per user request
     } catch (error) {
       console.error('Erro detalhado na reversão:', error);
       setNotification({ type: 'error', message: 'Erro ao reverter validação. Verifique o console para detalhes.' });
@@ -1712,21 +1751,48 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="p-6 bg-white border-b border-gray-100 flex flex-col md:row items-center gap-4">
+              <div className="p-6 bg-white border-b border-gray-100 flex flex-col md:flex-row items-end gap-4">
+                <div className="flex flex-col gap-1 w-full md:w-auto">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Início</label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                    <input 
+                      type="date"
+                      value={revalidationStartDate}
+                      onChange={(e) => setRevalidationStartDate(e.target.value)}
+                      className="pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium text-sm"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1 w-full md:w-auto">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Fim</label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                    <input 
+                      type="date"
+                      value={revalidationEndDate}
+                      onChange={(e) => setRevalidationEndDate(e.target.value)}
+                      className="pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium text-sm"
+                    />
+                  </div>
+                </div>
                 <div className="relative flex-1 w-full">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                  <input 
-                    type="text"
-                    placeholder="Buscar por arquivo, NF ou CNPJ..."
-                    value={revalidationSearch}
-                    onChange={(e) => { setRevalidationSearch(e.target.value); setRevalidationPage(1); }}
-                    className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium"
-                  />
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Pesquisar nos resultados</label>
+                  <div className="relative mt-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                    <input 
+                      type="text"
+                      placeholder="Buscar por arquivo, NF ou CNPJ..."
+                      value={revalidationSearch}
+                      onChange={(e) => { setRevalidationSearch(e.target.value); setRevalidationPage(1); }}
+                      className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium"
+                    />
+                  </div>
                 </div>
                 <button 
                   onClick={loadRevalidationFromSharePoint}
                   disabled={isFetchingRevalidation}
-                  className="px-4 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-600 transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest disabled:opacity-50"
+                  className="px-6 py-2.5 bg-dhl-dark text-white hover:bg-black rounded-xl transition-all flex items-center gap-2 font-black text-xs uppercase tracking-widest disabled:opacity-50 shadow-lg"
                 >
                   <RotateCcw size={16} className={isFetchingRevalidation ? 'animate-spin' : ''} />
                   Atualizar
@@ -1850,21 +1916,48 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="p-6 bg-white border-b border-gray-100 flex flex-col md:row items-center gap-4">
+              <div className="p-6 bg-white border-b border-gray-100 flex flex-col md:flex-row items-end gap-4">
+                <div className="flex flex-col gap-1 w-full md:w-auto">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Início</label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                    <input 
+                      type="date"
+                      value={fullHistoryStartDate}
+                      onChange={(e) => setFullHistoryStartDate(e.target.value)}
+                      className="pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium text-sm"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1 w-full md:w-auto">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Fim</label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                    <input 
+                      type="date"
+                      value={fullHistoryEndDate}
+                      onChange={(e) => setFullHistoryEndDate(e.target.value)}
+                      className="pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium text-sm"
+                    />
+                  </div>
+                </div>
                 <div className="relative flex-1 w-full">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                  <input 
-                    type="text"
-                    placeholder="Buscar por arquivo, NF, CNPJ ou e-mail..."
-                    value={fullHistorySearch}
-                    onChange={(e) => { setFullHistorySearch(e.target.value); setFullHistoryPage(1); }}
-                    className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium"
-                  />
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400 ml-1">Pesquisar nos resultados</label>
+                  <div className="relative mt-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                    <input 
+                      type="text"
+                      placeholder="Buscar por arquivo, NF, CNPJ ou e-mail..."
+                      value={fullHistorySearch}
+                      onChange={(e) => { setFullHistorySearch(e.target.value); setFullHistoryPage(1); }}
+                      className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-dhl-red/20 transition-all font-medium"
+                    />
+                  </div>
                 </div>
                 <button 
                   onClick={loadFullHistoryFromSharePoint}
                   disabled={isFetchingFullHistory}
-                  className="px-4 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl text-gray-600 transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest disabled:opacity-50"
+                  className="px-6 py-2.5 bg-dhl-dark text-white hover:bg-black rounded-xl transition-all flex items-center gap-2 font-black text-xs uppercase tracking-widest disabled:opacity-50 shadow-lg"
                 >
                   <RotateCcw size={16} className={isFetchingFullHistory ? 'animate-spin' : ''} />
                   Atualizar
