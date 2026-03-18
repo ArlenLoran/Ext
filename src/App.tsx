@@ -794,8 +794,36 @@ export default function App() {
     
     const osField = infCpl;
 
-    // Helper to get element text (case-insensitive)
-    const getTagValue = (tagName: string) => {
+    const getTagValue = (tagName: string, parentPath?: string[]) => {
+      let current: Element | null = xmlDoc.documentElement;
+      
+      if (parentPath && parentPath.length > 0) {
+        for (const pTag of parentPath) {
+          if (!current) break;
+          const found = Array.from(current.getElementsByTagName("*")).find(el => 
+            el.tagName.toLowerCase() === pTag.toLowerCase() && 
+            (el.parentNode === current || el.parentNode?.parentNode === current)
+          );
+          if (found) {
+            current = found;
+          } else {
+            current = null;
+          }
+        }
+      }
+
+      if (current) {
+        const target = Array.from(current.getElementsByTagName("*")).find(el => 
+          el.tagName.toLowerCase() === tagName.toLowerCase() &&
+          (el.parentNode === current || el.parentNode?.parentNode === current)
+        );
+        if (target) {
+          return target.textContent?.trim() || "";
+        }
+      }
+
+      if (parentPath && parentPath.length > 0) return "";
+
       const allElements = xmlDoc.getElementsByTagName("*");
       for (let i = 0; i < allElements.length; i++) {
         if (allElements[i].tagName.toLowerCase() === tagName.toLowerCase()) {
@@ -807,7 +835,16 @@ export default function App() {
 
     // Dynamic Mandatory Tags Validation
     mandatoryTags.forEach(m => {
-      const val = getTagValue(m.tag);
+      // Use path-aware search for common tags to avoid false positives
+      let val = "";
+      if (m.tag.toLowerCase() === 'cnpj') {
+        val = getTagValue("CNPJ", ["infNFe", "emit"]);
+      } else if (m.tag.toLowerCase() === 'nnf') {
+        val = getTagValue("nNF", ["infNFe", "ide"]);
+      } else {
+        val = getTagValue(m.tag);
+      }
+
       if (!val) {
         errors.push(`Campo obrigatório '${m.name}' não encontrado ou vazio.`);
       }
@@ -842,13 +879,22 @@ export default function App() {
     const allFields: { key: string; value: string }[] = [];
     const extractedFields: Record<string, string> = {};
     
+    // Populate mandatory fields first with path-aware logic to ensure accuracy
+    extractedFields["nNF"] = getTagValue("nNF", ["infNFe", "ide"]);
+    extractedFields["CNPJ"] = getTagValue("CNPJ", ["infNFe", "emit"]);
+    
     const traverse = (node: Node) => {
       if (node.nodeType === 1) { // Element
         const element = node as Element;
         if (element.children.length === 0 && element.textContent?.trim()) {
           const tag = element.tagName;
           const val = element.textContent.trim();
-          extractedFields[tag] = val;
+          
+          // Only set if not already set by path-aware logic or if it's not one of the path-sensitive tags
+          if (!extractedFields[tag]) {
+            extractedFields[tag] = val;
+          }
+          
           // Case-insensitive check for mandatory tags
           const isMandatory = mandatoryTags.some(t => t.tag.toLowerCase() === tag.toLowerCase());
           if (!isMandatory) {
@@ -943,12 +989,15 @@ export default function App() {
     }
   };
 
-  const checkNtvStatus = async (index: number, ncm: string) => {
+  const checkNtvStatus = async (fileName: string, ncm: string) => {
     if (!ncm) return;
     
     setResults(prev => {
       const updated = [...prev];
-      if (updated[index]) updated[index] = { ...updated[index], ntvStatus: 'loading' };
+      const idx = updated.findIndex(r => r.fileName === fileName);
+      if (idx !== -1) {
+        updated[idx] = { ...updated[idx], ntvStatus: 'loading' };
+      }
       return updated;
     });
 
@@ -979,8 +1028,9 @@ export default function App() {
       
       setResults(prev => {
         const updated = [...prev];
-        if (updated[index]) {
-          updated[index] = { ...updated[index], ntvStatus: isRegistered ? 'registered' : 'not_registered' };
+        const idx = updated.findIndex(r => r.fileName === fileName);
+        if (idx !== -1) {
+          updated[idx] = { ...updated[idx], ntvStatus: isRegistered ? 'registered' : 'not_registered' };
         }
         return updated;
       });
@@ -988,7 +1038,10 @@ export default function App() {
       console.error("Erro ao verificar NTV:", error);
       setResults(prev => {
         const updated = [...prev];
-        if (updated[index]) updated[index] = { ...updated[index], ntvStatus: 'error' };
+        const idx = updated.findIndex(r => r.fileName === fileName);
+        if (idx !== -1) {
+          updated[idx] = { ...updated[idx], ntvStatus: 'error' };
+        }
         return updated;
       });
     }
@@ -1009,10 +1062,10 @@ export default function App() {
     
     setResults(prev => {
       const combined = [...newResults, ...prev];
-      // Trigger background NTV checks for new results
-      newResults.forEach((res, i) => {
+      // Trigger background NTV checks for new results using fileName as unique key
+      newResults.forEach((res) => {
         if (res.ncm) {
-          checkNtvStatus(i, res.ncm);
+          checkNtvStatus(res.fileName, res.ncm);
         }
       });
       return combined;
