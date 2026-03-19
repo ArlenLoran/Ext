@@ -63,7 +63,9 @@ function buildRenamedXmlFileName(fileName: string): string {
 }
 
 function buildDecodedUrlApiSegment(serverRelativeUrl: string): string {
-  return `decodedurl='${escapeODataString(serverRelativeUrl)}'`;
+  // SharePoint GetFileByServerRelativePath expects a DECODED url
+  const decoded = decodeURIComponent(serverRelativeUrl);
+  return `decodedurl='${escapeODataString(decoded)}'`;
 }
 
 export async function downloadFileFromSharePoint(serverRelativeUrl: string, fileName: string): Promise<Blob> {
@@ -157,14 +159,18 @@ export async function renameXmlFileAsValidated(serverRelativeUrl: string): Promi
   const currentUrl = String(serverRelativeUrl || '').trim();
   if (!currentUrl) throw new Error('URL do arquivo no SharePoint não informada.');
 
-  const segments = currentUrl.split('/');
+  // Ensure we have a decoded version for path manipulation
+  const decodedUrl = decodeURIComponent(currentUrl);
+  const segments = decodedUrl.split('/');
   const currentName = segments.pop() || '';
   const renamed = buildRenamedXmlFileName(currentName);
 
   if (renamed === currentName) return currentUrl;
 
-  const targetUrl = `${segments.join('/')}/${renamed}`;
-  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${buildDecodedUrlApiSegment(currentUrl)})/moveto(newurl='${escapeODataString(targetUrl)}',flags=1)`;
+  const targetDecodedUrl = `${segments.join('/')}/${renamed}`;
+  // For the API call, we use the decoded path in GetFileByServerRelativePath
+  // and also the decoded path in moveto(newurl=...)
+  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${buildDecodedUrlApiSegment(currentUrl)})/moveto(newurl='${escapeODataString(targetDecodedUrl)}',flags=1)`;
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -180,14 +186,15 @@ export async function renameXmlFileAsValidated(serverRelativeUrl: string): Promi
     throw new Error(message || `Não foi possível renomear o arquivo ${currentName} no SharePoint.`);
   }
 
-  return targetUrl;
+  return targetDecodedUrl;
 }
 
 export async function revertXmlFileValidation(serverRelativeUrl: string): Promise<string> {
   const currentUrl = String(serverRelativeUrl || '').trim();
   if (!currentUrl) throw new Error('URL do arquivo no SharePoint não informada.');
 
-  const segments = currentUrl.split('/');
+  const decodedUrl = decodeURIComponent(currentUrl);
+  const segments = decodedUrl.split('/');
   const currentName = segments.pop() || '';
   
   // Remove "validado_" from the beginning
@@ -195,8 +202,8 @@ export async function revertXmlFileValidation(serverRelativeUrl: string): Promis
 
   if (originalName === currentName) return currentUrl;
 
-  const targetUrl = `${segments.join('/')}/${originalName}`;
-  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${buildDecodedUrlApiSegment(currentUrl)})/moveto(newurl='${escapeODataString(targetUrl)}',flags=1)`;
+  const targetDecodedUrl = `${segments.join('/')}/${originalName}`;
+  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${buildDecodedUrlApiSegment(currentUrl)})/moveto(newurl='${escapeODataString(targetDecodedUrl)}',flags=1)`;
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -212,5 +219,5 @@ export async function revertXmlFileValidation(serverRelativeUrl: string): Promis
     throw new Error(message || `Não foi possível reverter a renomeação do arquivo ${currentName} no SharePoint.`);
   }
 
-  return targetUrl;
+  return targetDecodedUrl;
 }

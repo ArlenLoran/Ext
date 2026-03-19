@@ -198,7 +198,7 @@ export function useSharePointManager(
     try {
       const filter = `Created ge datetime'${revalidationStartDate}T00:00:00Z' and Created le datetime'${revalidationEndDate}T23:59:59Z'`;
       const items = await SharePointListsService.getItems('DHL_ValidationHistory', {
-        select: ['Id', 'Title', 'ServerRelativeUrl', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd', 'Status', 'ValidationDate'],
+        select: ['Id', 'Title', 'FileRelativeUrl', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd', 'Status', 'ValidationDate'],
         orderBy: 'Id desc',
         top: 2000,
         filter
@@ -228,7 +228,7 @@ export function useSharePointManager(
     try {
       const filter = `Created ge datetime'${fullHistoryStartDate}T00:00:00Z' and Created le datetime'${fullHistoryEndDate}T23:59:59Z'`;
       const items = await SharePointListsService.getItems('DHL_FullHistory', {
-        select: ['Id', 'Title', 'ServerRelativeUrl', 'Status', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd', 'UserEmail', 'Source', 'ValidationDate'],
+        select: ['Id', 'Title', 'FileRelativeUrl', 'Status', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd', 'UserEmail', 'Source', 'ValidationDate'],
         orderBy: 'Id desc',
         top: 5000,
         filter
@@ -277,7 +277,7 @@ export function useSharePointManager(
     if (!SharePointListsService.isContextAvailable()) return;
     setIsFetchingRevalidation(true);
     try {
-      await revertXmlFileValidation(historyItem.ServerRelativeUrl);
+      await revertXmlFileValidation(historyItem.FileRelativeUrl);
       try {
         await SharePointListsService.deleteItem('DHL_ValidationHistory', historyItem.Id);
       } catch (delError) {
@@ -331,7 +331,7 @@ export function useSharePointManager(
       // Ensure Validation History List
       await SharePointListsService.ensureList('DHL_ValidationHistory', 'Histórico de validações para revalidação', [
         { title: 'Title', type: 'Text', required: true },
-        { title: 'ServerRelativeUrl', type: 'Text', required: true },
+        { title: 'FileRelativeUrl', type: 'Text', required: true },
         { title: 'nNF', type: 'Text' },
         { title: 'CNPJ', type: 'Text' },
         { title: 'OS', type: 'Text' },
@@ -343,7 +343,7 @@ export function useSharePointManager(
       await SharePointListsService.ensureList('DHL_FullHistory', 'Histórico completo de todas as validações', [
         { title: 'Title', type: 'Text', required: true },
         { title: 'Status', type: 'Text', required: true },
-        { title: 'ServerRelativeUrl', type: 'Text' },
+        { title: 'FileRelativeUrl', type: 'Text' },
         { title: 'nNF', type: 'Text' },
         { title: 'CNPJ', type: 'Text' },
         { title: 'OS', type: 'Text' },

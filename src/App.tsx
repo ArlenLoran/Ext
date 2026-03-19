@@ -193,9 +193,7 @@ export default function App() {
             const renamedFile = new File([await xmlFile.arrayBuffer()], newName, { type: 'text/xml' });
             
             // Move/Rename in SharePoint
-            const folderPath = serverRelativeUrl.substring(0, serverRelativeUrl.lastIndexOf('/'));
-            const newUrl = `${folderPath}/${newName}`;
-            await SharePointListsService.moveFile(serverRelativeUrl, newUrl);
+            const newUrl = await renameXmlFileAsValidated(serverRelativeUrl);
             
             spUrlMap[newName] = newUrl;
             importedFiles.push(renamedFile);
@@ -549,10 +547,11 @@ export default function App() {
         // Use Promise.all to ensure all items are created before refreshing the list
         Promise.all(newResults.map(async (res) => {
           try {
+            // Log to Full History
             await SharePointListsService.createItem('DHL_FullHistory', {
               Title: res.fileName,
               Status: res.isValid ? 'Válido' : 'Inválido',
-              ServerRelativeUrl: res.sharepointUrl || '',
+              FileRelativeUrl: res.sharepointUrl || '',
               nNF: res.nNF || '',
               CNPJ: res.cnpj || '',
               OS: res.osField || '',
@@ -562,8 +561,23 @@ export default function App() {
               Source: res.sharepointUrl ? 'SharePoint' : 'Local',
               ValidationDate: new Date().toISOString()
             });
+
+            // If it's a valid file from SharePoint, also log to Validation History for revalidation/reversion
+            if (res.isValid && res.sharepointUrl) {
+              await SharePointListsService.createItem('DHL_ValidationHistory', {
+                Title: res.fileName,
+                FileRelativeUrl: res.sharepointUrl,
+                nNF: res.nNF || '',
+                CNPJ: res.cnpj || '',
+                OS: res.osField || '',
+                NCM: res.ncm || '',
+                xProd: res.xProd || '',
+                Status: 'Válido',
+                ValidationDate: new Date().toISOString()
+              });
+            }
           } catch (err) {
-            console.error('Erro ao logar no histórico completo:', err);
+            console.error('Erro ao logar no histórico:', err);
           }
         })).then(() => {
           // No automatic refresh as per user request
@@ -2135,9 +2149,9 @@ export default function App() {
                           </div>
                           
                           <div className="flex items-center gap-2">
-                            {item.ServerRelativeUrl && (
+                            {item.FileRelativeUrl && (
                               <button
-                                onClick={() => validateSpFileManually({ name: item.Title, serverRelativeUrl: item.ServerRelativeUrl })}
+                                onClick={() => validateSpFileManually({ name: item.Title, serverRelativeUrl: item.FileRelativeUrl })}
                                 className="px-3 py-2 bg-dhl-dark hover:bg-black text-white rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all"
                                 title="Revalidar este arquivo"
                               >
@@ -2146,7 +2160,7 @@ export default function App() {
                               </button>
                             )}
                             <button
-                              onClick={() => downloadFromSharePoint(item.ServerRelativeUrl, item.Title)}
+                              onClick={() => downloadFromSharePoint(item.FileRelativeUrl, item.Title)}
                               className="p-2 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-lg transition-all border border-transparent hover:border-gray-200"
                               title="Baixar XML do SharePoint"
                             >
@@ -2341,18 +2355,18 @@ export default function App() {
                             </td>
                             <td className="p-4 text-right">
                               <div className="flex items-center justify-end gap-2">
-                                {item.Source === 'SharePoint' && item.ServerRelativeUrl && (
+                                {item.Source === 'SharePoint' && item.FileRelativeUrl && (
                                   <button
-                                    onClick={() => validateSpFileManually({ name: item.Title, serverRelativeUrl: item.ServerRelativeUrl })}
+                                    onClick={() => validateSpFileManually({ name: item.Title, serverRelativeUrl: item.FileRelativeUrl })}
                                     className="p-2 bg-dhl-dark hover:bg-black text-white rounded-lg transition-all"
                                     title="Revalidar arquivo"
                                   >
                                     <ArrowRight size={14} />
                                   </button>
                                 )}
-                                {item.Source === 'SharePoint' && item.ServerRelativeUrl && (
+                                {item.Source === 'SharePoint' && item.FileRelativeUrl && (
                                   <button
-                                    onClick={() => downloadFromSharePoint(item.ServerRelativeUrl, item.Title)}
+                                    onClick={() => downloadFromSharePoint(item.FileRelativeUrl, item.Title)}
                                     className="p-2 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-lg transition-all"
                                     title="Baixar XML"
                                   >

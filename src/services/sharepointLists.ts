@@ -241,6 +241,16 @@ export const SharePointListsService = {
     }
   },
 
+  async fieldExists(listTitle: string, fieldTitle: string): Promise<boolean> {
+    try {
+      const url = buildApiUrl(`/web/lists/getbytitle('${encodeURIComponent(listTitle)}')/fields/getbyinternalnameortitle('${encodeURIComponent(fieldTitle)}')?$select=Id`);
+      await spFetch(url);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
   async ensureList(
     listTitle: string,
     description = "",
@@ -249,7 +259,12 @@ export const SharePointListsService = {
     const exists = await this.listExists(listTitle);
     if (!exists) {
       await this.createList(listTitle, description);
-      for (const field of fields) {
+    }
+    
+    // Check and add missing fields
+    for (const field of fields) {
+      const fExists = await this.fieldExists(listTitle, field.title);
+      if (!fExists) {
         await this.createField(listTitle, field);
       }
     }
@@ -409,7 +424,9 @@ export const SharePointListsService = {
   },
 
   async moveFile(sourceUrl: string, destUrl: string): Promise<void> {
-    const url = buildApiUrl(`/web/getfilebyserverrelativeurl('${encodeURIComponent(sourceUrl)}')/moveto(newurl='${encodeURIComponent(destUrl)}',flags=1)`);
+    const decodedSource = decodeURIComponent(sourceUrl);
+    const decodedDest = decodeURIComponent(destUrl);
+    const url = buildApiUrl(`/web/GetFileByServerRelativePath(decodedurl='${decodedSource.replace(/'/g, "''")}')/moveto(newurl='${decodedDest.replace(/'/g, "''")}',flags=1)`);
     await spFetch(
       url,
       {
