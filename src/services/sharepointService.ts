@@ -32,7 +32,22 @@ function getWebServerRelativeUrl(): string {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
-function getRequestDigest(): string {
+async function getRequestDigest(): Promise<string> {
+  // First try to get a fresh digest from the API
+  try {
+    const response = await fetch(`${getSiteAbsoluteUrl()}/_api/contextinfo`, {
+      method: 'POST',
+      headers: { Accept: 'application/json; odata=verbose' }
+    });
+    if (response.ok) {
+      const data = await response.json();
+      return data.d.GetContextWebInformation.FormDigestValue;
+    }
+  } catch (err) {
+    console.warn('Falha ao obter FormDigest via API, tentando contexto local:', err);
+  }
+
+  // Fallback to local context
   const value = String(getContext().formDigestValue || '').trim();
   if (!value) throw new Error('FormDigest não encontrado no contexto do SharePoint.');
   return value;
@@ -55,11 +70,11 @@ function normalizeFolderServerRelativeUrl(folderPath: string): string {
   return `${webRel}/${cleanFolder}`.replace(/\/+/g, '/');
 }
 
-function buildRenamedXmlFileName(fileName: string): string {
+export function buildRenamedXmlFileName(fileName: string): string {
   const trimmed = String(fileName || '').trim();
   if (!trimmed) throw new Error('Nome de arquivo inválido para renomeação.');
-  if (/^validado_/i.test(trimmed)) return trimmed;
-  return `validado_${trimmed}`;
+  if (/^Validado_/i.test(trimmed)) return trimmed;
+  return `Validado_${trimmed}`;
 }
 
 function buildDecodedUrlApiSegment(serverRelativeUrl: string): string {
@@ -111,7 +126,7 @@ export async function listAllXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'):
     .map(item => ({
       name: item.Name,
       serverRelativeUrl: item.ServerRelativeUrl,
-      isValidated: /^validado_/i.test(item.Name),
+      isValidated: /^Validado_/i.test(item.Name),
       timeCreated: item.TimeCreated
     }));
 }
@@ -133,8 +148,8 @@ export async function listXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'): Pr
 
   const data = await response.json();
   const files = (data?.d?.results || []) as Array<{ Name: string; ServerRelativeUrl: string }>;
-  // Filter for .xml files and EXCLUDE those already marked as "validado" (prefix validado_)
-  const xmlFiles = files.filter((item) => /\.xml$/i.test(item.Name) && !/^validado_/i.test(item.Name));
+  // Filter for .xml files and EXCLUDE those already marked as "Validado" (prefix Validado_)
+  const xmlFiles = files.filter((item) => /\.xml$/i.test(item.Name) && !/^Validado_/i.test(item.Name));
 
   const downloaded = await Promise.all(
     xmlFiles.map(async (item) => {
@@ -168,21 +183,25 @@ export async function renameXmlFileAsValidated(serverRelativeUrl: string): Promi
   if (renamed === currentName) return currentUrl;
 
   const targetDecodedUrl = `${segments.join('/')}/${renamed}`;
-  // For the API call, we use the decoded path in GetFileByServerRelativePath
-  // and also the decoded path in moveto(newurl=...)
-  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${buildDecodedUrlApiSegment(currentUrl)})/moveto(newurl='${escapeODataString(targetDecodedUrl)}',flags=1)`;
+  
+  // Use GetFileByServerRelativePath for better handling of special characters
+  const decodedUrlSegment = `decodedurl='${escapeODataString(decodedUrl)}'`;
+  const targetUrlSegment = `newurl='${escapeODataString(targetDecodedUrl)}'`;
+  
+  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${decodedUrlSegment})/moveto(${targetUrlSegment},flags=1)`;
 
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       Accept: 'application/json; odata=verbose',
-      'X-RequestDigest': getRequestDigest()
+      'X-RequestDigest': await getRequestDigest()
     },
     credentials: 'same-origin'
   });
 
   if (!response.ok) {
     const message = await response.text().catch(() => '');
+    console.error('SharePoint Rename Error:', message);
     throw new Error(message || `Não foi possível renomear o arquivo ${currentName} no SharePoint.`);
   }
 
@@ -197,8 +216,8 @@ export async function revertXmlFileValidation(serverRelativeUrl: string): Promis
   const segments = decodedUrl.split('/');
   const currentName = segments.pop() || '';
   
-  // Remove "validado_" from the beginning
-  const originalName = currentName.replace(/^validado_/i, '');
+  // Remove "Validado_" from the beginning
+  const originalName = currentName.replace(/^Validado_/i, '');
 
   if (originalName === currentName) return currentUrl;
 
@@ -209,7 +228,7 @@ export async function revertXmlFileValidation(serverRelativeUrl: string): Promis
     method: 'POST',
     headers: {
       Accept: 'application/json; odata=verbose',
-      'X-RequestDigest': getRequestDigest()
+      'X-RequestDigest': await getRequestDigest()
     },
     credentials: 'same-origin'
   });

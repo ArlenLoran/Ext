@@ -100,8 +100,8 @@ export function useSharePointManager(
 
         enrichedFiles = enrichedFiles.map(file => {
           const originalName = file.name;
-          const validatedName = file.isValidated ? originalName : `validado_${originalName}`;
-          const unvalidatedName = file.isValidated ? originalName.replace(/^validado_/i, '') : originalName;
+          const validatedName = file.isValidated ? originalName : `Validado_${originalName}`;
+          const unvalidatedName = file.isValidated ? originalName.replace(/^Validado_/i, '') : originalName;
           
           const record = history.find(h => 
             h.Title === originalName || h.Title === validatedName || h.Title === unvalidatedName

@@ -38,7 +38,7 @@ import {
   MoreVertical
 } from 'lucide-react';
 import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtml } from './services/emailService';
-import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation, downloadFileFromSharePoint, listAllXmlFilesFromFolder } from './services/sharepointService';
+import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation, downloadFileFromSharePoint, listAllXmlFilesFromFolder, buildRenamedXmlFileName } from './services/sharepointService';
 import { SharePointListsService } from './services/sharepointLists';
 
 import { useNotifications } from './hooks/useNotifications';
@@ -186,21 +186,16 @@ export default function App() {
           const fileName = file.name;
           const serverRelativeUrl = file.serverRelativeUrl;
 
-          // Rename the file if it's valid
+          // Rename the file in SharePoint so it doesn't appear in the next import
           const res = await validateXML(xmlFile);
-          if (res.isValid) {
-            const newName = `validado_${fileName}`;
-            const renamedFile = new File([await xmlFile.arrayBuffer()], newName, { type: 'text/xml' });
-            
-            // Move/Rename in SharePoint
-            const newUrl = await renameXmlFileAsValidated(serverRelativeUrl);
-            
-            spUrlMap[newName] = newUrl;
-            importedFiles.push(renamedFile);
-          } else {
-            spUrlMap[fileName] = serverRelativeUrl;
-            importedFiles.push(xmlFile);
-          }
+          const newName = buildRenamedXmlFileName(fileName);
+          const renamedFile = new File([await xmlFile.arrayBuffer()], newName, { type: 'text/xml' });
+          
+          // Move/Rename in SharePoint
+          const newUrl = await renameXmlFileAsValidated(serverRelativeUrl);
+          
+          spUrlMap[newName] = newUrl;
+          importedFiles.push(renamedFile);
         } catch (err) {
           console.error(`Erro ao importar arquivo ${file.name}:`, err);
         }
@@ -623,11 +618,16 @@ export default function App() {
       const blob = await SharePointListsService.downloadFile(spFile.serverRelativeUrl);
       const file = new File([blob], spFile.name, { type: 'text/xml' });
       
-      const spUrlMap = { [spFile.name]: spFile.serverRelativeUrl };
-      await handleFiles([file], spUrlMap);
+      // Rename the file in SharePoint so it doesn't appear in the next import
+      const newName = buildRenamedXmlFileName(spFile.name);
+      const renamedFile = new File([await file.arrayBuffer()], newName, { type: 'text/xml' });
+      const newUrl = await renameXmlFileAsValidated(spFile.serverRelativeUrl);
+      
+      const spUrlMap = { [newName]: newUrl };
+      await handleFiles([renamedFile], spUrlMap);
       
       setShowSpManager(false);
-      showNotification('success', 'Arquivo importado para validação!');
+      showNotification('success', 'Arquivo importado e validado no SharePoint!');
       fetchSpStats(); // Refresh stats
     } catch (error) {
       console.error(error);
