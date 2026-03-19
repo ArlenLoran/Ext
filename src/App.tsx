@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Upload, 
@@ -39,169 +39,87 @@ import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtm
 import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation, downloadFileFromSharePoint, listAllXmlFilesFromFolder } from './services/sharepointService';
 import { SharePointListsService } from './services/sharepointLists';
 
-interface ValidationResult {
-  fileName: string;
-  nNF: string;
-  cnpj: string;
-  ncm: string;
-  osField: string;
-  xProd: string;
-  isValid: boolean;
-  errors: string[];
-  rawContent: string;
-  extractedFields: Record<string, string>;
-  allFields: { key: string; value: string }[];
-  originalFile: File;
-  sent: boolean;
-  ntvStatus?: 'loading' | 'registered' | 'not_registered' | 'error';
-  sharepointUrl?: string;
-  spValidated?: boolean;
-}
+import { useNotifications } from './hooks/useNotifications';
+import { useXMLValidator } from './hooks/useXMLValidator';
+import { useSharePointManager } from './hooks/useSharePointManager';
+import { useResults } from './hooks/useResults';
+import { ValidationResult } from './types';
 
 export default function App() {
-  const [results, setResults] = useState<ValidationResult[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
-  const [expandedIndices, setExpandedIndices] = useState<number[]>([]);
-  const [sendingEmailIdx, setSendingEmailIdx] = useState<number | null>(null);
-  const [isSendingBatch, setIsSendingBatch] = useState(false);
-  const [isFetchingSharePoint, setIsFetchingSharePoint] = useState(false);
-  const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const { notification, showNotification, setNotification } = useNotifications();
+  const { results, setResults, expandedIndices, setExpandedIndices, resultsFilters, setResultsFilters, clearAll, toggleExpand, removeResult } = useResults();
+  const { mandatoryTags, setMandatoryTags, osForbiddenPatterns, setOsForbiddenPatterns, validateXML, extractXmlMetadata, checkNtvStatus } = useXMLValidator();
   
-  // Results Filtering State
-  const [resultsFilters, setResultsFilters] = useState({
-    nNF: '',
-    cnpj: '',
-    ncm: '',
-    os: '',
-    xProd: ''
-  });
-
-  // Email management state
   const [recipients, setRecipients] = useState<string[]>(() => {
     const saved = localStorage.getItem('dhl_recipients');
-    return saved ? JSON.parse(saved) : ['Arlen.Oliveira@dhl.com'];
+    return saved ? JSON.parse(saved) : [];
   });
   const [newEmail, setNewEmail] = useState('');
-  const [editingEmail, setEditingEmail] = useState<{ index: number, value: string } | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
-
-  // Pagination and Filtering State for Settings
+  const [editingEmail, setEditingEmail] = useState<{ index: number; value: string } | null>(null);
   const [emailSearch, setEmailSearch] = useState('');
   const [emailPage, setEmailPage] = useState(1);
+
+  const [newTagName, setNewTagName] = useState('');
+  const [newTagRef, setNewTagRef] = useState('');
+  const [newPattern, setNewPattern] = useState('');
+
+  const {
+    isSpAvailable, setIsSpAvailable,
+    isSpInitialized, setIsSpInitialized,
+    isInitializingSp, setIsInitializingSp,
+    isFetchingSharePoint, setIsFetchingSharePoint,
+    revalidationItems, setRevalidationItems,
+    showRevalidation, setShowRevalidation,
+    isFetchingRevalidation,
+    revalidationSearch, setRevalidationSearch,
+    revalidationPage, setRevalidationPage,
+    revalidationStartDate, setRevalidationStartDate,
+    revalidationEndDate, setRevalidationEndDate,
+    fullHistory, setFullHistory,
+    showFullHistory, setShowFullHistory,
+    isFetchingFullHistory,
+    fullHistorySearch, setFullHistorySearch,
+    fullHistoryPage, setFullHistoryPage,
+    fullHistoryStartDate, setFullHistoryStartDate,
+    fullHistoryEndDate, setFullHistoryEndDate,
+    spStats,
+    spFilesList, setSpFilesList,
+    isFetchingSpStats,
+    showSpManager, setShowSpManager,
+    spManagerSearch, setSpManagerSearch,
+    spManagerPage, setSpManagerPage,
+    spManagerStartDate, setSpManagerStartDate,
+    spManagerEndDate, setSpManagerEndDate,
+    filteredSpFiles,
+    fetchSpStats,
+    checkSpInitialization,
+    loadRevalidationFromSharePoint,
+    loadFullHistoryFromSharePoint,
+    downloadFromSharePoint,
+    handleRevertSpFile,
+    handleRevertValidation,
+    initializeSharePoint,
+    syncAllToSharePoint
+  } = useSharePointManager(
+    showNotification,
+    recipients,
+    setRecipients,
+    mandatoryTags,
+    setMandatoryTags,
+    osForbiddenPatterns,
+    setOsForbiddenPatterns
+  );
+
+  const [isDragging, setIsDragging] = useState(false);
+  const [sendingEmailIdx, setSendingEmailIdx] = useState<number | null>(null);
+  const [isSendingBatch, setIsSendingBatch] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
   const [tagSearch, setTagSearch] = useState('');
   const [tagPage, setTagPage] = useState(1);
   const [patternSearch, setPatternSearch] = useState('');
   const [patternPage, setPatternPage] = useState(1);
-  const itemsPerPage = 5;
-
-  // SharePoint Integration State
-  const [isSpAvailable, setIsSpAvailable] = useState(false);
-  const [isSpInitialized, setIsSpInitialized] = useState(false);
-  const [isInitializingSp, setIsInitializingSp] = useState(false);
-
-  // Revalidation State (formerly History)
-  const [revalidationItems, setRevalidationItems] = useState<any[]>([]);
-  const [showRevalidation, setShowRevalidation] = useState(false);
-  const [isFetchingRevalidation, setIsFetchingRevalidation] = useState(false);
-  const [revalidationSearch, setRevalidationSearch] = useState('');
-  const [revalidationPage, setRevalidationPage] = useState(1);
-  const [revalidationStartDate, setRevalidationStartDate] = useState('');
-  const [revalidationEndDate, setRevalidationEndDate] = useState('');
-
-  // Full History State
-  const [fullHistory, setFullHistory] = useState<any[]>([]);
-  const [showFullHistory, setShowFullHistory] = useState(false);
-  const [isFetchingFullHistory, setIsFetchingFullHistory] = useState(false);
-  const [fullHistorySearch, setFullHistorySearch] = useState('');
-  const [fullHistoryPage, setFullHistoryPage] = useState(1);
-  const [fullHistoryStartDate, setFullHistoryStartDate] = useState('');
-  const [fullHistoryEndDate, setFullHistoryEndDate] = useState('');
-  
-  // SharePoint Stats State
-  const [spStats, setSpStats] = useState({ analyzed: 0, pending: 0 });
-  const [spFilesList, setSpFilesList] = useState<{ 
-    name: string; 
-    serverRelativeUrl: string; 
-    isValidated: boolean;
-    timeCreated: string;
-    nNF?: string;
-    CNPJ?: string;
-    OS?: string;
-    NCM?: string;
-    xProd?: string;
-  }[]>([]);
-  const [isFetchingSpStats, setIsFetchingSpStats] = useState(false);
-  const [showSpManager, setShowSpManager] = useState(false);
-  const [spManagerSearch, setSpManagerSearch] = useState('');
-  const [spManagerPage, setSpManagerPage] = useState(1);
-  const [spManagerStartDate, setSpManagerStartDate] = useState('');
-  const [spManagerEndDate, setSpManagerEndDate] = useState('');
-
-  const filteredSpFiles = React.useMemo(() => {
-    return spFilesList.filter(file => {
-      // Date Range Filter
-      if (spManagerStartDate) {
-        const fileDate = new Date(file.timeCreated);
-        const startDate = new Date(spManagerStartDate);
-        startDate.setHours(0, 0, 0, 0);
-        if (fileDate < startDate) return false;
-      }
-      
-      if (spManagerEndDate) {
-        const fileDate = new Date(file.timeCreated);
-        const endDate = new Date(spManagerEndDate);
-        endDate.setHours(23, 59, 59, 999);
-        if (fileDate > endDate) return false;
-      }
-
-      const search = spManagerSearch.toLowerCase();
-      if (!search) return true;
-      return (
-        file.name.toLowerCase().includes(search) ||
-        file.nNF?.toLowerCase().includes(search) ||
-        file.CNPJ?.toLowerCase().includes(search) ||
-        file.OS?.toLowerCase().includes(search) ||
-        file.NCM?.toLowerCase().includes(search) ||
-        file.xProd?.toLowerCase().includes(search)
-      );
-    });
-  }, [spFilesList, spManagerSearch, spManagerStartDate, spManagerEndDate]);
-
-  // Validation Rules State
-  const [mandatoryTags, setMandatoryTags] = useState<{ name: string, tag: string }[]>(() => {
-    const saved = localStorage.getItem('dhl_mandatory_tags');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // Migration: if it's still an array of strings, convert to objects
-      if (parsed.length > 0 && typeof parsed[0] === 'string') {
-        return parsed.map((tag: string) => {
-          const name = {
-            nNF: "Número da Nota",
-            CNPJ: "CNPJ Emitente",
-            NCM: "NCM Produto",
-            infCpl: "Campo OS",
-            natOp: "Natureza da Operação"
-          }[tag] || tag;
-          return { name, tag };
-        });
-      }
-      return parsed;
-    }
-    return [
-      { name: "Número da Nota", tag: "nNF" },
-      { name: "CNPJ Emitente", tag: "CNPJ" },
-      { name: "NCM Produto", tag: "NCM" },
-      { name: "Campo OS", tag: "infCpl" }
-    ];
-  });
-  const [newTagName, setNewTagName] = useState('');
-  const [newTagRef, setNewTagRef] = useState('');
-
-  const [osForbiddenPatterns, setOsForbiddenPatterns] = useState<string[]>(() => {
-    const saved = localStorage.getItem('dhl_os_forbidden_patterns');
-    return saved ? JSON.parse(saved) : ["OS:\\s+\\d+", "OS:\\d+[\\.,]\\d+"];
-  });
-  const [newPattern, setNewPattern] = useState('');
+  const itemsPerPage = 10;
 
   // Check SharePoint Context on Mount
   React.useEffect(() => {
@@ -214,357 +132,60 @@ export default function App() {
       const interval = setInterval(fetchSpStats, 5 * 60 * 1000);
       return () => clearInterval(interval);
     }
-  }, []);
+  }, [checkSpInitialization, fetchSpStats, setIsSpAvailable]);
 
-  const extractXmlMetadata = (xmlText: string) => {
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+  const handleSharePointImport = async (files: any[]) => {
+    if (files.length === 0) return;
     
-    const getTagValue = (tagName: string, parentPath?: string[]) => {
-      let current: Element | null = xmlDoc.documentElement;
-      
-      if (parentPath && parentPath.length > 0) {
-        for (const pTag of parentPath) {
-          if (!current) break;
-          // Scoped search for the next path segment
-          const found = Array.from(current.getElementsByTagName("*")).find(el => 
-            el.tagName.toLowerCase() === pTag.toLowerCase() && 
-            (el.parentNode === current || el.parentNode?.parentNode === current)
-          );
-          if (found) {
-            current = found;
+    setIsFetchingSharePoint(true);
+    try {
+      const spUrlMap: Record<string, string> = {};
+      const importedFiles: File[] = [];
+
+      for (const file of files) {
+        try {
+          const blob = await SharePointListsService.downloadFile(file.serverRelativeUrl);
+          const xmlFile = new File([blob], file.name, { type: 'text/xml' });
+          
+          // Rename the file if it's valid
+          const res = await validateXML(xmlFile);
+          if (res.isValid) {
+            const newName = `VALIDADO_${file.name}`;
+            const renamedFile = new File([blob], newName, { type: 'text/xml' });
+            
+            // Move/Rename in SharePoint
+            const folderPath = file.serverRelativeUrl.substring(0, file.serverRelativeUrl.lastIndexOf('/'));
+            const newUrl = `${folderPath}/${newName}`;
+            await SharePointListsService.moveFile(file.serverRelativeUrl, newUrl);
+            
+            spUrlMap[newName] = newUrl;
+            importedFiles.push(renamedFile);
           } else {
-            current = null;
+            spUrlMap[file.name] = file.serverRelativeUrl;
+            importedFiles.push(xmlFile);
           }
+        } catch (err) {
+          console.error(`Erro ao importar arquivo ${file.name}:`, err);
         }
       }
 
-      if (current) {
-        const target = Array.from(current.getElementsByTagName("*")).find(el => 
-          el.tagName.toLowerCase() === tagName.toLowerCase() &&
-          (el.parentNode === current || el.parentNode?.parentNode === current)
-        );
-        if (target) {
-          return target.textContent?.trim() || "";
-        }
-      }
-
-      // If a path was specified and we got here, it means it wasn't found in that path
-      if (parentPath && parentPath.length > 0) return "";
-
-      // Global search only as a last resort if no path was specified
-      const allElements = xmlDoc.getElementsByTagName("*");
-      for (let i = 0; i < allElements.length; i++) {
-        if (allElements[i].tagName.toLowerCase() === tagName.toLowerCase()) {
-          return allElements[i].textContent?.trim() || "";
-        }
-      }
-      return "";
-    };
-
-    const nNF = getTagValue("nNF", ["infNFe", "ide"]);
-    const cnpj = getTagValue("CNPJ", ["infNFe", "emit"]);
-    
-    // Extract all NCM values
-    const ncmElements = xmlDoc.getElementsByTagName("NCM");
-    const ncmList: string[] = [];
-    for (let i = 0; i < ncmElements.length; i++) {
-      if (ncmElements[i].textContent) {
-        ncmList.push(ncmElements[i].textContent!.trim());
-      }
-    }
-    const ncm = ncmList.join(" | ");
-
-    const infCpl = getTagValue("infCpl", ["infNFe", "infAdic"]);
-    
-    const xProdElements = xmlDoc.getElementsByTagName("xProd");
-    const xProdList: string[] = [];
-    for (let i = 0; i < xProdElements.length; i++) {
-      if (xProdElements[i].textContent) {
-        xProdList.push(xProdElements[i].textContent!.trim());
-      }
-    }
-    const xProd = xProdList.join(" | ");
-
-    return { nNF, cnpj, ncm, infCpl, xProd };
-  };
-
-  // Refresh stats when manager is opened
-  React.useEffect(() => {
-    if (showSpManager && isSpAvailable) {
-      fetchSpStats();
-    }
-  }, [showSpManager, isSpAvailable]);
-
-  const fetchSpStats = async () => {
-    if (!SharePointListsService.isContextAvailable()) return;
-    try {
-      setIsFetchingSpStats(true);
-      const files = await listAllXmlFilesFromFolder();
-      
-      // Fetch history to get metadata for analyzed files
-      let enrichedFiles = files.map(f => ({ ...f, nNF: '', CNPJ: '', OS: '', NCM: '', xProd: '' }));
-      
-      try {
-        const history = await SharePointListsService.getItems('DHL_FullHistory', {
-          select: ['Title', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd']
-        });
-        
-        enrichedFiles = files.map(file => {
-          // Look for original name or renamed name in history
-          const originalName = file.name.replace(/\svalidado\.xml$/i, '.xml');
-          const hist = history.find(h => h.Title === file.name || h.Title === originalName);
-          return {
-            ...file,
-            nNF: hist?.nNF || '',
-            CNPJ: hist?.CNPJ || '',
-            OS: hist?.OS || '',
-            NCM: hist?.NCM || '',
-            xProd: hist?.xProd || ''
-          };
-        });
-      } catch (hError) {
-        console.warn('Histórico ainda não disponível para enriquecimento de estatísticas.');
-      }
-
-      setSpFilesList(enrichedFiles);
-      const analyzedCount = enrichedFiles.filter(f => f.isValidated).length;
-      const pendingCount = enrichedFiles.length - analyzedCount;
-      setSpStats({ analyzed: analyzedCount, pending: pendingCount });
-
-      // Deep Scan for Pending Files (only if manager is open or first load)
-      const pendingFiles = enrichedFiles.filter(f => !f.isValidated && !f.nNF);
-      if (pendingFiles.length > 0) {
-        // Scan in chunks to avoid overwhelming the browser
-        const chunkSize = 5;
-        for (let i = 0; i < pendingFiles.length; i += chunkSize) {
-          const chunk = pendingFiles.slice(i, i + chunkSize);
-          await Promise.all(chunk.map(async (pfile) => {
-            try {
-              const blob = await downloadFileFromSharePoint(pfile.serverRelativeUrl, pfile.name);
-              const text = await blob.text();
-              const metadata = extractXmlMetadata(text);
-              
-              setSpFilesList(prev => prev.map(f => 
-                f.serverRelativeUrl === pfile.serverRelativeUrl 
-                ? { ...f, ...metadata, OS: metadata.infCpl } 
-                : f
-              ));
-            } catch (err) {
-              console.error(`Erro ao escanear ${pfile.name}:`, err);
-            }
-          }));
-        }
+      if (importedFiles.length > 0) {
+        await handleFiles(importedFiles, spUrlMap);
+        showNotification('success', `${importedFiles.length} arquivo(s) importado(s) e validado(s) do SharePoint.`);
       }
     } catch (error) {
-      console.error('Erro ao buscar estatísticas do SharePoint:', error);
+      console.error('Erro ao importar do SharePoint:', error);
+      showNotification('error', 'Falha ao importar arquivos do SharePoint.');
     } finally {
-      setIsFetchingSpStats(false);
+      setIsFetchingSharePoint(false);
+      fetchSpStats(); // Refresh stats after import/rename
     }
   };
 
-  const checkSpInitialization = async () => {
-    try {
-      const recExists = await SharePointListsService.listExists('DHL_Recipients');
-      const tagExists = await SharePointListsService.listExists('DHL_MandatoryTags');
-      const patExists = await SharePointListsService.listExists('DHL_OSPatterns');
-      const revalExists = await SharePointListsService.listExists('DHL_ValidationHistory');
-      const histExists = await SharePointListsService.listExists('DHL_FullHistory');
-      
-      if (recExists && tagExists && patExists && revalExists && histExists) {
-        setIsSpInitialized(true);
-        loadDataFromSharePoint();
-      }
-    } catch (error) {
-      console.error('Erro ao verificar inicialização do SharePoint:', error);
-    }
-  };
-
-  const validateDateRange = (start: string, end: string) => {
-    if (!start || !end) return { valid: false, message: 'Selecione as datas de início e fim.' };
-    const startDate = new Date(start);
-    const endDate = new Date(end);
-    const diffTime = Math.abs(endDate.getTime() - startDate.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    
-    if (startDate > endDate) return { valid: false, message: 'A data de início não pode ser maior que a data de fim.' };
-    if (diffDays > 30) return { valid: false, message: 'O intervalo máximo permitido é de 30 dias.' };
-    
-    return { valid: true, message: '' };
-  };
-
-  const loadRevalidationFromSharePoint = async () => {
-    if (!SharePointListsService.isContextAvailable()) return;
-    
-    const validation = validateDateRange(revalidationStartDate, revalidationEndDate);
-    if (!validation.valid) {
-      setNotification({ type: 'error', message: validation.message });
-      return;
-    }
-
-    setIsFetchingRevalidation(true);
-    try {
-      const filter = `Created ge datetime'${revalidationStartDate}T00:00:00Z' and Created le datetime'${revalidationEndDate}T23:59:59Z'`;
-      const items = await SharePointListsService.getItems('DHL_ValidationHistory', {
-        orderBy: 'Id desc',
-        top: 2000,
-        filter
-      });
-      setRevalidationItems(items);
-      if (items.length === 0) {
-        setNotification({ type: 'success', message: 'Nenhum registro encontrado para este período.' });
-      }
-    } catch (error) {
-      console.error('Erro ao carregar revalidação:', error);
-      setNotification({ type: 'error', message: 'Erro ao carregar dados do SharePoint.' });
-    } finally {
-      setIsFetchingRevalidation(false);
-    }
-  };
-
-  const loadFullHistoryFromSharePoint = async () => {
-    if (!SharePointListsService.isContextAvailable()) return;
-
-    const validation = validateDateRange(fullHistoryStartDate, fullHistoryEndDate);
-    if (!validation.valid) {
-      setNotification({ type: 'error', message: validation.message });
-      return;
-    }
-
-    setIsFetchingFullHistory(true);
-    try {
-      const filter = `Created ge datetime'${fullHistoryStartDate}T00:00:00Z' and Created le datetime'${fullHistoryEndDate}T23:59:59Z'`;
-      const items = await SharePointListsService.getItems('DHL_FullHistory', {
-        orderBy: 'Id desc',
-        top: 5000,
-        filter
-      });
-      setFullHistory(items);
-      if (items.length === 0) {
-        setNotification({ type: 'success', message: 'Nenhum registro encontrado para este período.' });
-      }
-    } catch (error) {
-      console.error('Erro ao carregar histórico:', error);
-      setNotification({ type: 'error', message: 'Erro ao carregar dados do SharePoint.' });
-    } finally {
-      setIsFetchingFullHistory(false);
-    }
-  };
-
-  const loadDataFromSharePoint = async () => {
-    try {
-      const spRecipients = await SharePointListsService.getItems('DHL_Recipients', { select: ['Title'] });
-      if (spRecipients.length > 0) {
-        setRecipients(spRecipients.map(item => item.Title));
-      }
-
-      const spTags = await SharePointListsService.getItems('DHL_MandatoryTags', { select: ['Title', 'TagRef'] });
-      if (spTags.length > 0) {
-        setMandatoryTags(spTags.map(item => ({ name: item.Title, tag: item.TagRef })));
-      }
-
-      const spPatterns = await SharePointListsService.getItems('DHL_OSPatterns', { select: ['Title'] });
-      if (spPatterns.length > 0) {
-        setOsForbiddenPatterns(spPatterns.map(item => item.Title));
-      }
-    } catch (error) {
-      console.error('Erro ao carregar dados do SharePoint:', error);
-    }
-  };
-
-  const initializeSharePoint = async () => {
-    if (!isSpAvailable) {
-      setNotification({ type: 'error', message: 'Contexto do SharePoint não encontrado.' });
-      return;
-    }
-
-    setIsInitializingSp(true);
-    try {
-      // Ensure Recipients List
-      await SharePointListsService.ensureList('DHL_Recipients', 'Lista de e-mails para notificações', [
-        { title: 'Title', type: 'Text', required: true } // Title will be the Email
-      ]);
-
-      // Ensure Mandatory Tags List
-      await SharePointListsService.ensureList('DHL_MandatoryTags', 'Campos obrigatórios para validação XML', [
-        { title: 'Title', type: 'Text', required: true }, // Display Name
-        { title: 'TagRef', type: 'Text', required: true } // XML Tag
-      ]);
-
-      // Ensure OS Patterns List
-      await SharePointListsService.ensureList('DHL_OSPatterns', 'Padrões de regex para validação de OS', [
-        { title: 'Title', type: 'Text', required: true } // Regex Pattern
-      ]);
-
-      // Ensure Validation History List (Revalidation)
-      await SharePointListsService.ensureList('DHL_ValidationHistory', 'Arquivos validados para revalidação', [
-        { title: 'Title', type: 'Text', required: true }, // Filename
-        { title: 'Status', type: 'Text', required: true },
-        { title: 'nNF', type: 'Text' },
-        { title: 'CNPJ', type: 'Text' },
-        { title: 'OS', type: 'Text' },
-        { title: 'NCM', type: 'Text' },
-        { title: 'xProd', type: 'Text' },
-        { title: 'ServerRelativeUrl', type: 'Text' },
-        { title: 'Errors', type: 'Note' },
-        { title: 'ValidationDate', type: 'DateTime' }
-      ]);
-
-      // Ensure Full History List
-      await SharePointListsService.ensureList('DHL_FullHistory', 'Histórico completo de todas as validações', [
-        { title: 'Title', type: 'Text', required: true }, // Filename
-        { title: 'Status', type: 'Text', required: true },
-        { title: 'nNF', type: 'Text' },
-        { title: 'CNPJ', type: 'Text' },
-        { title: 'OS', type: 'Text' },
-        { title: 'NCM', type: 'Text' },
-        { title: 'xProd', type: 'Text' },
-        { title: 'UserEmail', type: 'Text' },
-        { title: 'Source', type: 'Text' }, // SharePoint / Local
-        { title: 'ValidationDate', type: 'DateTime' }
-      ]);
-
-      setIsSpInitialized(true);
-      setNotification({ type: 'success', message: 'Listas do SharePoint inicializadas com sucesso!' });
-      
-      // Sync current local data to SharePoint
-      await syncAllToSharePoint();
-      loadRevalidationFromSharePoint();
-      loadFullHistoryFromSharePoint();
-      
-    } catch (error) {
-      console.error('Erro ao inicializar SharePoint:', error);
-      setNotification({ type: 'error', message: 'Erro ao criar listas no SharePoint.' });
-    } finally {
-      setIsInitializingSp(false);
-      setTimeout(() => setNotification(null), 3000);
-    }
-  };
-
-  const syncAllToSharePoint = async () => {
-    try {
-      // This is a simple sync: for each local item, upsert it to SharePoint
-      for (const email of recipients) {
-        await SharePointListsService.upsertItem('DHL_Recipients', `Title eq '${email}'`, { Title: email });
-      }
-      for (const tag of mandatoryTags) {
-        await SharePointListsService.upsertItem('DHL_MandatoryTags', `TagRef eq '${tag.tag}'`, { Title: tag.name, TagRef: tag.tag });
-      }
-      for (const pattern of osForbiddenPatterns) {
-        await SharePointListsService.upsertItem('DHL_OSPatterns', `Title eq '${pattern}'`, { Title: pattern });
-      }
-    } catch (error) {
-      console.error('Erro ao sincronizar dados com SharePoint:', error);
-    }
-  };
 
   React.useEffect(() => {
     localStorage.setItem('dhl_recipients', JSON.stringify(recipients));
-    if (isSpInitialized) {
-      // Sync individual changes could be complex, for now we just save to localStorage
-      // In a real app, we'd update SP on each add/remove
-    }
-  }, [recipients, isSpInitialized]);
+  }, [recipients]);
 
   React.useEffect(() => {
     localStorage.setItem('dhl_mandatory_tags', JSON.stringify(mandatoryTags));
@@ -710,11 +331,6 @@ export default function App() {
     }
   };
 
-  const toggleExpand = (index: number) => {
-    setExpandedIndices(prev => 
-      prev.includes(index) ? prev.filter(i => i !== index) : [...prev, index]
-    );
-  };
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -815,270 +431,6 @@ export default function App() {
     }
   };
 
-  const validateXML = async (file: File): Promise<ValidationResult> => {
-    const text = await file.text();
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(text, "text/xml");
-    const metadata = extractXmlMetadata(text);
-    const { nNF, cnpj, ncm, infCpl, xProd } = metadata;
-    
-    const errors: string[] = [];
-    
-    const osField = infCpl;
-
-    const getTagValue = (tagName: string, parentPath?: string[]) => {
-      let current: Element | null = xmlDoc.documentElement;
-      
-      if (parentPath && parentPath.length > 0) {
-        for (const pTag of parentPath) {
-          if (!current) break;
-          const found = Array.from(current.getElementsByTagName("*")).find(el => 
-            el.tagName.toLowerCase() === pTag.toLowerCase() && 
-            (el.parentNode === current || el.parentNode?.parentNode === current)
-          );
-          if (found) {
-            current = found;
-          } else {
-            current = null;
-          }
-        }
-      }
-
-      if (current) {
-        const target = Array.from(current.getElementsByTagName("*")).find(el => 
-          el.tagName.toLowerCase() === tagName.toLowerCase() &&
-          (el.parentNode === current || el.parentNode?.parentNode === current)
-        );
-        if (target) {
-          return target.textContent?.trim() || "";
-        }
-      }
-
-      if (parentPath && parentPath.length > 0) return "";
-
-      const allElements = xmlDoc.getElementsByTagName("*");
-      for (let i = 0; i < allElements.length; i++) {
-        if (allElements[i].tagName.toLowerCase() === tagName.toLowerCase()) {
-          return allElements[i].textContent?.trim() || "";
-        }
-      }
-      return "";
-    };
-
-    // Dynamic Mandatory Tags Validation
-    mandatoryTags.forEach(m => {
-      // Use path-aware search for common tags to avoid false positives
-      let val = "";
-      if (m.tag.toLowerCase() === 'cnpj') {
-        val = getTagValue("CNPJ", ["infNFe", "emit"]);
-      } else if (m.tag.toLowerCase() === 'nnf') {
-        val = getTagValue("nNF", ["infNFe", "ide"]);
-      } else {
-        val = getTagValue(m.tag);
-      }
-
-      if (!val) {
-        errors.push(`Campo obrigatório '${m.name}' não encontrado ou vazio.`);
-      }
-    });
-
-    // OS Validation
-    const osMatch = infCpl.match(/OS:(\d+)/);
-    const osValue = osMatch ? osMatch[0] : "";
-    
-    if (!osValue) {
-      if (infCpl.toLowerCase().includes("os:")) {
-        errors.push("Campo OS encontrado mas em formato inválido (deve ser 'OS:12345678' sem espaços ou pontos).");
-      } else {
-        errors.push("Campo OS não encontrado nas informações complementares (infCpl).");
-      }
-    } else {
-      // Dynamic Forbidden Patterns Validation
-      osForbiddenPatterns.forEach(patternStr => {
-        try {
-          const regex = new RegExp(patternStr, 'i');
-          const match = infCpl.match(regex);
-          if (match) {
-            errors.push(`Aviso: Detectado possível formato inválido próximo a '${match[0]}'. O padrão correto é 'OS:62669329'.`);
-          }
-        } catch (e) {
-          console.error("Invalid regex pattern:", patternStr);
-        }
-      });
-    }
-
-    // Extract all fields
-    const allFields: { key: string; value: string }[] = [];
-    const extractedFields: Record<string, string> = {};
-    
-    // Populate mandatory fields first with path-aware logic to ensure accuracy
-    extractedFields["nNF"] = getTagValue("nNF", ["infNFe", "ide"]);
-    extractedFields["CNPJ"] = getTagValue("CNPJ", ["infNFe", "emit"]);
-    
-    const traverse = (node: Node) => {
-      if (node.nodeType === 1) { // Element
-        const element = node as Element;
-        if (element.children.length === 0 && element.textContent?.trim()) {
-          const tag = element.tagName;
-          const val = element.textContent.trim();
-          
-          // Only set if not already set by path-aware logic or if it's not one of the path-sensitive tags
-          if (!extractedFields[tag]) {
-            extractedFields[tag] = val;
-          }
-          
-          // Case-insensitive check for mandatory tags
-          const isMandatory = mandatoryTags.some(t => t.tag.toLowerCase() === tag.toLowerCase());
-          if (!isMandatory) {
-            allFields.push({ key: tag, value: val });
-          }
-        }
-        for (let i = 0; i < element.children.length; i++) {
-          traverse(element.children[i]);
-        }
-      }
-    };
-    traverse(xmlDoc.documentElement);
-
-    return {
-      fileName: file.name,
-      nNF,
-      cnpj,
-      ncm,
-      osField: osValue || "Não encontrado",
-      xProd,
-      isValid: errors.length === 0,
-      errors,
-      rawContent: text,
-      extractedFields,
-      allFields,
-      originalFile: file,
-      sent: false
-    };
-  };
-
-  const clearAll = () => setResults([]);
-
-  const handleSharePointImport = async () => {
-    setIsFetchingSharePoint(true);
-    try {
-      const spFiles = await listXmlFilesFromFolder('SiteAssets/XMLs');
-      if (spFiles.length === 0) {
-        setNotification({ type: 'error', message: 'Nenhum arquivo XML encontrado na pasta do SharePoint.' });
-        return;
-      }
-      
-      const files = spFiles.map(f => f.file);
-      const spUrlMap = spFiles.reduce((acc, f) => {
-        acc[f.name] = f.serverRelativeUrl;
-        return acc;
-      }, {} as Record<string, string>);
-      
-      const newResults = await handleFiles(files, spUrlMap);
-      
-      // Automatically rename all imported files as "validated" in SharePoint
-      // so they don't appear in the next fetch.
-      // We do this in the background to not block the UI.
-      spFiles.forEach(async (spFile) => {
-        try {
-          const result = newResults.find(r => r.fileName === spFile.name);
-          const newUrl = await renameXmlFileAsValidated(spFile.serverRelativeUrl);
-          
-          if (isSpInitialized) {
-            await SharePointListsService.createItem('DHL_ValidationHistory', {
-              Title: spFile.name,
-              Status: result?.isValid ? 'Validado' : 'Erro',
-              nNF: result?.nNF || '',
-              CNPJ: result?.cnpj || '',
-              OS: result?.osField || '',
-              NCM: result?.ncm || '',
-              xProd: result?.xProd || '',
-              ServerRelativeUrl: newUrl,
-              Errors: result?.errors.join('; ') || '',
-              ValidationDate: new Date().toISOString()
-            });
-            // No automatic refresh as per user request
-          }
-
-          // Update the local state with the new URL for this file
-          setResults(prev => prev.map(r => 
-            r.fileName === spFile.name && r.sharepointUrl === spFile.serverRelativeUrl 
-            ? { ...r, sharepointUrl: newUrl, spValidated: true } 
-            : r
-          ));
-        } catch (err) {
-          console.error(`Erro ao renomear ${spFile.name}:`, err);
-        }
-      });
-
-      setNotification({ type: 'success', message: `${spFiles.length} arquivos importados e validados no SharePoint!` });
-    } catch (error) {
-      console.error(error);
-      setNotification({ type: 'error', message: error instanceof Error ? error.message : 'Erro ao importar do SharePoint.' });
-    } finally {
-      setIsFetchingSharePoint(false);
-      setTimeout(() => setNotification(null), 5000);
-    }
-  };
-
-  const checkNtvStatus = async (fileName: string, ncm: string) => {
-    if (!ncm) return;
-    
-    setResults(prev => {
-      const updated = [...prev];
-      const idx = updated.findIndex(r => r.fileName === fileName);
-      if (idx !== -1) {
-        updated[idx] = { ...updated[idx], ntvStatus: 'loading' };
-      }
-      return updated;
-    });
-
-    const url = "https://51a805d34213e248a3506f5db8fe28.55.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/655aac37bdea49b1b1221a2f37198754/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=-2l0x4h5cwmpZ20RCIbMrzaR0860ka4aB8_dDOVQQHQ";
-    
-    const payload = {
-      query: `SELECT * FROM PRTMST WHERE PRTNUM LIKE '%${ncm}%'`,
-      id_score: "12345"
-    };
-
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      const contentType = response.headers.get("content-type");
-      let result;
-      if (contentType && contentType.includes("application/json")) {
-        result = await response.json();
-      } else {
-        const text = await response.text();
-        try { result = JSON.parse(text); } catch { result = text; }
-      }
-
-      const isRegistered = Array.isArray(result) && result.length > 0;
-      
-      setResults(prev => {
-        const updated = [...prev];
-        const idx = updated.findIndex(r => r.fileName === fileName);
-        if (idx !== -1) {
-          updated[idx] = { ...updated[idx], ntvStatus: isRegistered ? 'registered' : 'not_registered' };
-        }
-        return updated;
-      });
-    } catch (error) {
-      console.error("Erro ao verificar NTV:", error);
-      setResults(prev => {
-        const updated = [...prev];
-        const idx = updated.findIndex(r => r.fileName === fileName);
-        if (idx !== -1) {
-          updated[idx] = { ...updated[idx], ntvStatus: 'error' };
-        }
-        return updated;
-      });
-    }
-  };
-
   const handleFiles = async (files: FileList | File[], spUrlMap?: Record<string, string>): Promise<ValidationResult[]> => {
     const newResults: ValidationResult[] = [];
     for (let i = 0; i < files.length; i++) {
@@ -1097,7 +449,7 @@ export default function App() {
       // Trigger background NTV checks for new results using fileName as unique key
       newResults.forEach((res) => {
         if (res.ncm) {
-          checkNtvStatus(res.fileName, res.ncm);
+          checkNtvStatus(res.fileName, res.ncm, setResults);
         }
       });
       return combined;
@@ -1150,10 +502,6 @@ export default function App() {
     setIsDragging(false);
   };
 
-  const removeResult = (index: number) => {
-    setResults(prev => prev.filter((_, i) => i !== index));
-  };
-
   const downloadXml = (result: ValidationResult) => {
     const blob = new Blob([result.rawContent], { type: 'text/xml' });
     const url = URL.createObjectURL(blob);
@@ -1166,75 +514,21 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const downloadFromSharePoint = async (serverRelativeUrl: string, fileName: string) => {
-    try {
-      const blob = await downloadFileFromSharePoint(serverRelativeUrl, fileName);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error(error);
-      setNotification({ type: 'error', message: 'Erro ao baixar arquivo do SharePoint.' });
-    }
-  };
-
   const validateSpFileManually = async (spFile: { name: string; serverRelativeUrl: string }) => {
     try {
-      setNotification({ type: 'success', message: `Importando ${spFile.name}...` });
-      const blob = await downloadFileFromSharePoint(spFile.serverRelativeUrl, spFile.name);
+      showNotification('success', `Importando ${spFile.name}...`);
+      const blob = await SharePointListsService.downloadFile(spFile.serverRelativeUrl);
       const file = new File([blob], spFile.name, { type: 'text/xml' });
       
       const spUrlMap = { [spFile.name]: spFile.serverRelativeUrl };
       await handleFiles([file], spUrlMap);
       
       setShowSpManager(false);
-      setNotification({ type: 'success', message: 'Arquivo importado para validação!' });
+      showNotification('success', 'Arquivo importado para validação!');
       fetchSpStats(); // Refresh stats
     } catch (error) {
       console.error(error);
-      setNotification({ type: 'error', message: 'Erro ao importar arquivo do SharePoint.' });
-    }
-  };
-
-  const handleRevertSpFile = async (spFile: { name: string; serverRelativeUrl: string }) => {
-    try {
-      await revertXmlFileValidation(spFile.serverRelativeUrl);
-      setNotification({ type: 'success', message: 'Validação revertida com sucesso!' });
-      fetchSpStats(); // Refresh stats
-    } catch (error) {
-      console.error(error);
-      setNotification({ type: 'error', message: 'Erro ao reverter validação.' });
-    }
-  };
-
-  const handleRevertValidation = async (historyItem: any) => {
-    if (!isSpAvailable) return;
-    setIsFetchingRevalidation(true);
-    try {
-      // 1. Revert rename in SharePoint
-      await revertXmlFileValidation(historyItem.ServerRelativeUrl);
-      
-      // 2. Delete from history list
-      try {
-        await SharePointListsService.deleteItem('DHL_ValidationHistory', historyItem.Id);
-      } catch (delError) {
-        console.warn('Erro ao deletar item do histórico, mas o arquivo foi restaurado:', delError);
-      }
-      
-      setNotification({ type: 'success', message: `Validação do arquivo ${historyItem.Title} revertida com sucesso!` });
-      
-      // No automatic refresh as per user request
-    } catch (error) {
-      console.error('Erro detalhado na reversão:', error);
-      setNotification({ type: 'error', message: 'Erro ao reverter validação. Verifique o console para detalhes.' });
-    } finally {
-      setIsFetchingRevalidation(false);
-      setTimeout(() => setNotification(null), 3000);
+      showNotification('error', 'Erro ao importar arquivo do SharePoint.');
     }
   };
 
@@ -1306,14 +600,6 @@ export default function App() {
                 </div>
               </div>
             </div>
-
-            <button 
-              onClick={() => setShowSpManager(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 border border-gray-200 rounded-xl transition-all group shadow-sm"
-            >
-              <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 group-hover:text-dhl-dark">Gerenciar Pasta</span>
-              <ChevronRight size={14} className="text-gray-400 group-hover:text-dhl-red transition-colors" />
-            </button>
           </motion.div>
         )}
 
@@ -1345,53 +631,111 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 md:gap-3">
-              {/* Secondary Actions Group */}
-              <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl p-1">
+            <div className="flex flex-wrap items-center gap-2 md:gap-3 relative">
+              {/* Menu de Opções Dropdown */}
+              <div className="relative">
                 <button 
-                  onClick={() => setShowFullHistory(true)}
-                  className="p-2 text-gray-500 hover:bg-gray-200 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
-                  title="Histórico Completo de Validações"
+                  onClick={() => setShowMenu(!showMenu)}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all font-black text-xs uppercase tracking-widest shadow-md border ${showMenu ? 'bg-dhl-dark text-white border-dhl-dark' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
                 >
-                  <History size={16} />
-                  <span className="hidden sm:inline">Histórico</span>
+                  <Settings size={16} className={showMenu ? 'animate-spin-slow' : ''} />
+                  <span>Opções</span>
+                  <ChevronDown size={14} className={`transition-transform duration-300 ${showMenu ? 'rotate-180' : ''}`} />
                 </button>
 
-                <div className="w-px h-6 bg-gray-200 mx-1" />
+                <AnimatePresence>
+                  {showMenu && (
+                    <>
+                      {/* Overlay to close menu */}
+                      <div 
+                        className="fixed inset-0 z-40" 
+                        onClick={() => setShowMenu(false)} 
+                      />
+                      
+                      <motion.div
+                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                        className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-2xl shadow-2xl z-50 overflow-hidden"
+                      >
+                        <div className="p-2 space-y-1">
+                          <div className="px-3 py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 mb-1">
+                            Ferramentas & Gestão
+                          </div>
+                          
+                          <button 
+                            onClick={() => { setShowFullHistory(true); setShowMenu(false); }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-600 hover:bg-gray-50 hover:text-dhl-dark rounded-xl transition-all text-left group"
+                          >
+                            <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors">
+                              <History size={16} />
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-xs font-black uppercase tracking-widest">Histórico</span>
+                              <span className="text-[9px] text-gray-400 font-medium">Todas as validações</span>
+                            </div>
+                          </button>
 
-                <button 
-                  onClick={() => setShowRevalidation(true)}
-                  className="p-2 text-gray-500 hover:bg-gray-200 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
-                  title="Revalidação de Arquivos SharePoint"
-                >
-                  <RotateCcw size={16} />
-                  <span className="hidden sm:inline">Revalidação</span>
-                </button>
+                          <button 
+                            onClick={() => { setShowRevalidation(true); setShowMenu(false); }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-600 hover:bg-gray-50 hover:text-dhl-dark rounded-xl transition-all text-left group"
+                          >
+                            <div className="p-1.5 bg-orange-50 text-orange-600 rounded-lg group-hover:bg-orange-100 transition-colors">
+                              <RotateCcw size={16} />
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-xs font-black uppercase tracking-widest">Revalidação</span>
+                              <span className="text-[9px] text-gray-400 font-medium">Arquivos SharePoint</span>
+                            </div>
+                          </button>
 
-                <div className="w-px h-6 bg-gray-200 mx-1" />
+                          <button 
+                            onClick={() => { setShowSpManager(true); setShowMenu(false); }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-600 hover:bg-gray-50 hover:text-dhl-dark rounded-xl transition-all text-left group"
+                          >
+                            <div className="p-1.5 bg-purple-50 text-purple-600 rounded-lg group-hover:bg-purple-100 transition-colors">
+                              <FileSearch size={16} />
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-xs font-black uppercase tracking-widest">Gerenciar Pasta</span>
+                              <span className="text-[9px] text-gray-400 font-medium">Explorar SiteAssets</span>
+                            </div>
+                          </button>
 
-                <button 
-                  onClick={() => setShowSettings(!showSettings)}
-                  className={`p-2 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest ${showSettings ? 'bg-dhl-dark text-white' : 'text-gray-500 hover:bg-gray-200'}`}
-                  title="Configurações do Sistema"
-                >
-                  <Settings size={16} />
-                  <span className="hidden sm:inline">Configurações</span>
-                </button>
-                
-                {results.length > 0 && (
-                  <>
-                    <div className="w-px h-6 bg-gray-200 mx-1" />
-                    <button 
-                      onClick={clearAll}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
-                      title="Limpar Tudo"
-                    >
-                      <Trash2 size={16} />
-                      <span className="hidden sm:inline">Limpar</span>
-                    </button>
-                  </>
-                )}
+                          <div className="h-px bg-gray-100 my-1 mx-2" />
+
+                          <button 
+                            onClick={() => { setShowSettings(true); setShowMenu(false); }}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-600 hover:bg-gray-50 hover:text-dhl-dark rounded-xl transition-all text-left group"
+                          >
+                            <div className="p-1.5 bg-gray-100 text-gray-600 rounded-lg group-hover:bg-gray-200 transition-colors">
+                              <Settings size={16} />
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-xs font-black uppercase tracking-widest">Configurações</span>
+                              <span className="text-[9px] text-gray-400 font-medium">Regras e Alertas</span>
+                            </div>
+                          </button>
+
+                          {results.length > 0 && (
+                            <button 
+                              onClick={() => { clearAll(); setShowMenu(false); }}
+                              className="w-full flex items-center gap-3 px-3 py-2.5 text-red-500 hover:bg-red-50 rounded-xl transition-all text-left group"
+                            >
+                              <div className="p-1.5 bg-red-100 text-red-600 rounded-lg group-hover:bg-red-200 transition-colors">
+                                <Trash2 size={16} />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-xs font-black uppercase tracking-widest">Limpar Tudo</span>
+                                <span className="text-[9px] text-red-400 font-medium">Remover resultados</span>
+                              </div>
+                            </button>
+                          )}
+                        </div>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
               </div>
 
               {/* Primary Actions */}
@@ -1403,7 +747,7 @@ export default function App() {
                 {isFetchingSharePoint ? (
                   <><Loader2 size={16} className="animate-spin" /> BUSCANDO...</>
                 ) : (
-                  <><FileSearch size={16} /> IMPORTAR SHAREPOINT</>
+                  <><FileSearch size={16} /> IMPORTAR</>
                 )}
               </button>
 

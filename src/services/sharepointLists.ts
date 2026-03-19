@@ -391,4 +391,31 @@ export const SharePointListsService = {
     const id = await this.createItem(listTitle, payload);
     return { id, created: true };
   },
+
+  async downloadFile(serverRelativeUrl: string): Promise<Blob> {
+    const url = buildApiUrl(`/web/getfilebyserverrelativeurl('${encodeURIComponent(serverRelativeUrl)}')/$value`);
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        Accept: "application/octet-stream",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Erro ao baixar arquivo: ${response.status}`);
+    }
+
+    return await response.blob();
+  },
+
+  async moveFile(sourceUrl: string, destUrl: string): Promise<void> {
+    const url = buildApiUrl(`/web/getfilebyserverrelativeurl('${encodeURIComponent(sourceUrl)}')/moveto(newurl='${encodeURIComponent(destUrl)}',flags=1)`);
+    await spFetch(
+      url,
+      {
+        method: "POST",
+      },
+      true
+    );
+  },
 };
