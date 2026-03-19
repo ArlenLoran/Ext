@@ -50,7 +50,7 @@ import { ValidationResult } from './types';
 export default function App() {
   const { notification, showNotification, setNotification } = useNotifications();
   const { results, setResults, expandedIndices, setExpandedIndices, resultsFilters, setResultsFilters, clearAll, toggleExpand, removeResult } = useResults();
-  const { mandatoryTags, setMandatoryTags, osForbiddenPatterns, setOsForbiddenPatterns, registeredProducts, setRegisteredProducts, validateXML, extractXmlMetadata, checkNtvStatus, checkOsStatus } = useXMLValidator();
+  const { mandatoryTags, setMandatoryTags, osForbiddenPatterns, setOsForbiddenPatterns, registeredProducts, setRegisteredProducts, validateXML, extractXmlMetadata, checkNtvStatus, checkOsStatus, checkNcmStatus } = useXMLValidator();
   
   const [recipients, setRecipients] = useState<string[]>(() => {
     const saved = localStorage.getItem('dhl_recipients');
@@ -529,13 +529,16 @@ export default function App() {
     if (newResults.length > 0) {
       setResults(prev => [...newResults, ...prev]);
 
-      // Trigger background NTV and OS checks for new results using fileName as unique key
+      // Trigger background NTV, OS and NCM checks for new results using fileName as unique key
       newResults.forEach((res) => {
         if (res.xProd) {
           checkNtvStatus(res.fileName, res.xProd, setResults);
         }
         if (res.osField && res.osField !== "Não encontrado") {
           checkOsStatus(res.fileName, res.osField, setResults);
+        }
+        if (res.ncm) {
+          checkNcmStatus(res.fileName, res.ncm, setResults);
         }
       });
 
@@ -1632,6 +1635,50 @@ export default function App() {
                                 </td>
                                 <td className="py-4">
                                   {result.osField !== "Não encontrado" ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}
+                                </td>
+                              </tr>
+                            );
+                          }
+
+                          // Special handling for NCM with status check
+                          if (m.tag.toLowerCase() === 'ncm') {
+                            return (
+                              <tr key={m.tag} className="group hover:bg-gray-50 transition-colors">
+                                <td className="py-4 font-bold text-gray-600">Validação de NCM</td>
+                                <td className="py-4 font-mono">
+                                  <div className="flex flex-col gap-1">
+                                    <span className="text-xs">{value || "---"}</span>
+                                    {value && (
+                                      <div className="flex items-center gap-2">
+                                        {result.ncmStatus === 'loading' ? (
+                                          <span className="text-[10px] text-blue-500 flex items-center gap-1 animate-pulse">
+                                            <Loader2 size={10} className="animate-spin" /> Verificando NCM...
+                                          </span>
+                                        ) : result.ncmStatus === 'registered' ? (
+                                          <span className="text-[10px] text-green-600 font-bold flex items-center gap-1">
+                                            <CheckCircle2 size={10} /> NCM cadastrado no sistema
+                                          </span>
+                                        ) : result.ncmStatus === 'not_registered' ? (
+                                          <span className="text-[10px] text-orange-600 font-bold flex items-center gap-1">
+                                            <AlertCircle size={10} /> NCM não cadastrado no sistema
+                                          </span>
+                                        ) : result.ncmStatus === 'error' ? (
+                                          <span className="text-[10px] text-red-500 flex items-center gap-1">
+                                            <XCircle size={10} /> Erro na consulta NCM
+                                          </span>
+                                        ) : null}
+                                        <button 
+                                          onClick={() => checkNcmStatus(result.fileName, value, setResults)}
+                                          className="text-[9px] underline text-gray-400 hover:text-dhl-red uppercase tracking-tighter"
+                                        >
+                                          Revalidar
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="py-4">
+                                  {value ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}
                                 </td>
                               </tr>
                             );
