@@ -10,7 +10,9 @@ export function useSharePointManager(
   mandatoryTags: MandatoryTag[],
   setMandatoryTags: (t: MandatoryTag[]) => void,
   osForbiddenPatterns: string[],
-  setOsForbiddenPatterns: (p: string[]) => void
+  setOsForbiddenPatterns: (p: string[]) => void,
+  importLimit: number,
+  setImportLimit: (l: number) => void
 ) {
   const [isSpAvailable, setIsSpAvailable] = useState(false);
   const [isSpInitialized, setIsSpInitialized] = useState(false);
@@ -147,10 +149,16 @@ export function useSharePointManager(
       if (spPatterns.length > 0) {
         setOsForbiddenPatterns(spPatterns.map(item => item.Title));
       }
+
+      const spConfig = await SharePointListsService.getItems('DHL_Config', { select: ['Title', 'Value'] });
+      const limitConfig = spConfig.find(c => c.Title === 'ImportLimit');
+      if (limitConfig) {
+        setImportLimit(parseInt(limitConfig.Value, 10));
+      }
     } catch (error) {
       console.error('Erro ao carregar dados do SharePoint:', error);
     }
-  }, [setRecipients, setMandatoryTags, setOsForbiddenPatterns]);
+  }, [setRecipients, setMandatoryTags, setOsForbiddenPatterns, setImportLimit]);
 
   const checkSpInitialization = useCallback(async () => {
     try {
@@ -159,8 +167,9 @@ export function useSharePointManager(
       const patExists = await SharePointListsService.listExists('DHL_OSPatterns');
       const revalExists = await SharePointListsService.listExists('DHL_ValidationHistory');
       const histExists = await SharePointListsService.listExists('DHL_FullHistory');
+      const configExists = await SharePointListsService.listExists('DHL_Config');
       
-      if (recExists && tagExists && patExists && revalExists && histExists) {
+      if (recExists && tagExists && patExists && revalExists && histExists && configExists) {
         setIsSpInitialized(true);
         loadDataFromSharePoint();
         return true;
@@ -303,10 +312,11 @@ export function useSharePointManager(
       for (const pattern of osForbiddenPatterns) {
         await SharePointListsService.upsertItem('DHL_OSPatterns', `Title eq '${pattern}'`, { Title: pattern });
       }
+      await SharePointListsService.upsertItem('DHL_Config', "Title eq 'ImportLimit'", { Title: 'ImportLimit', Value: importLimit.toString() });
     } catch (error) {
       console.error('Erro ao sincronizar dados com SharePoint:', error);
     }
-  }, [recipients, mandatoryTags, osForbiddenPatterns]);
+  }, [recipients, mandatoryTags, osForbiddenPatterns, importLimit]);
 
   const initializeSharePoint = useCallback(async () => {
     if (!SharePointListsService.isContextAvailable()) return;
@@ -352,6 +362,12 @@ export function useSharePointManager(
         { title: 'UserEmail', type: 'Text' },
         { title: 'Source', type: 'Text' },
         { title: 'ValidationDate', type: 'DateTime' }
+      ]);
+
+      // Ensure Config List
+      await SharePointListsService.ensureList('DHL_Config', 'Configurações gerais do sistema', [
+        { title: 'Title', type: 'Text', required: true },
+        { title: 'Value', type: 'Text', required: true }
       ]);
 
       setIsSpInitialized(true);

@@ -60,6 +60,10 @@ export default function App() {
   const [editingEmail, setEditingEmail] = useState<{ index: number; value: string } | null>(null);
   const [emailSearch, setEmailSearch] = useState('');
   const [emailPage, setEmailPage] = useState(1);
+  const [importLimit, setImportLimit] = useState<number>(() => {
+    const saved = localStorage.getItem('dhl_import_limit');
+    return saved ? parseInt(saved, 10) : 10;
+  });
 
   const [newTagName, setNewTagName] = useState('');
   const [newTagRef, setNewTagRef] = useState('');
@@ -110,7 +114,9 @@ export default function App() {
     mandatoryTags,
     setMandatoryTags,
     osForbiddenPatterns,
-    setOsForbiddenPatterns
+    setOsForbiddenPatterns,
+    importLimit,
+    setImportLimit
   );
 
   const [isDragging, setIsDragging] = useState(false);
@@ -155,7 +161,14 @@ export default function App() {
           setIsFetchingSharePoint(false);
           return;
         }
-        filesToProcess = fetchedFiles;
+        
+        // Limita a quantidade de arquivos conforme configuração
+        const limitedFiles = fetchedFiles.slice(0, importLimit);
+        filesToProcess = limitedFiles;
+        
+        if (fetchedFiles.length > importLimit) {
+          showNotification('success', `Existem ${fetchedFiles.length} arquivos pendentes. Importando os primeiros ${importLimit} conforme limite configurado.`);
+        }
       } catch (error) {
         console.error('Erro ao buscar arquivos do SharePoint:', error);
         showNotification('error', 'Erro ao buscar arquivos do SharePoint.');
@@ -230,6 +243,10 @@ export default function App() {
   React.useEffect(() => {
     localStorage.setItem('dhl_registered_products', JSON.stringify(registeredProducts));
   }, [registeredProducts]);
+
+  React.useEffect(() => {
+    localStorage.setItem('dhl_import_limit', importLimit.toString());
+  }, [importLimit]);
 
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -1342,6 +1359,50 @@ export default function App() {
                           </div>
                         );
                       })()}
+                    </div>
+
+                    {/* Import Settings Section */}
+                    <div className="space-y-4 flex flex-col h-full">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                          <RefreshCw size={16} /> Configurações de Importação
+                        </h4>
+                      </div>
+
+                      <div className="bg-gray-50/50 border border-gray-100 rounded-xl p-4 space-y-4">
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-gray-500 uppercase tracking-widest">
+                            Limite de Arquivos por Importação
+                          </label>
+                          <div className="flex items-center gap-4">
+                            <input 
+                              type="range" 
+                              min="1" 
+                              max="50" 
+                              value={importLimit}
+                              onChange={(e) => setImportLimit(parseInt(e.target.value))}
+                              className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-dhl-red"
+                            />
+                            <div className="bg-white border border-gray-200 rounded-lg px-3 py-1 min-w-[60px] text-center">
+                              <span className="text-sm font-black text-dhl-dark">{importLimit}</span>
+                            </div>
+                          </div>
+                          <p className="text-[10px] text-gray-400 leading-tight">
+                            Define o número máximo de arquivos XML que serão processados do SharePoint em uma única operação. 
+                            Arquivos excedentes ficarão para a próxima importação.
+                          </p>
+                        </div>
+
+                        <div className="pt-4 border-t border-gray-100">
+                          <div className="flex items-center gap-2 text-dhl-red">
+                            <AlertCircle size={14} />
+                            <span className="text-[10px] font-bold uppercase tracking-widest">Dica de Performance</span>
+                          </div>
+                          <p className="text-[10px] text-gray-400 mt-1">
+                            Manter o limite entre 10 e 20 arquivos garante uma resposta mais rápida do sistema e evita timeouts do navegador.
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
