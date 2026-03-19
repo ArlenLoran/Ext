@@ -33,6 +33,11 @@ export function useXMLValidator() {
     return saved ? JSON.parse(saved) : ["OS:\\s+\\d+", "OS:\\d+[\\.,]\\d+"];
   });
 
+  const [registeredProducts, setRegisteredProducts] = useState<string[]>(() => {
+    const saved = localStorage.getItem('dhl_registered_products');
+    return saved ? JSON.parse(saved) : ["PWI"];
+  });
+
   const extractXmlMetadata = useCallback((xmlText: string) => {
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(xmlText, "text/xml");
@@ -234,9 +239,26 @@ export function useXMLValidator() {
     };
   }, [mandatoryTags, osForbiddenPatterns, extractXmlMetadata]);
 
-  const checkNtvStatus = useCallback(async (fileName: string, ncm: string, setResults: React.Dispatch<React.SetStateAction<ValidationResult[]>>) => {
-    if (!ncm) return;
+  const checkNtvStatus = useCallback(async (fileName: string, xProd: string, setResults: React.Dispatch<React.SetStateAction<ValidationResult[]>>) => {
+    if (!xProd) return;
     
+    // Find which registered product is present in xProd
+    const foundProduct = registeredProducts.find(p => 
+      xProd.toUpperCase().includes(p.toUpperCase())
+    );
+
+    if (!foundProduct) {
+      setResults(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(r => r.fileName === fileName);
+        if (idx !== -1) {
+          updated[idx] = { ...updated[idx], ntvStatus: 'not_registered' };
+        }
+        return updated;
+      });
+      return;
+    }
+
     setResults(prev => {
       const updated = [...prev];
       const idx = updated.findIndex(r => r.fileName === fileName);
@@ -249,7 +271,7 @@ export function useXMLValidator() {
     const url = "https://51a805d34213e248a3506f5db8fe28.55.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/655aac37bdea49b1b1221a2f37198754/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=-2l0x4h5cwmpZ20RCIbMrzaR0860ka4aB8_dDOVQQHQ";
     
     const payload = {
-      query: `SELECT * FROM PRTMST WHERE PRTNUM LIKE '%${ncm}%'`,
+      query: `SELECT * FROM PRTMST WHERE UPPER(PRTNUM) LIKE UPPER('${foundProduct}')`,
       id_score: "12345"
     };
 
@@ -379,6 +401,8 @@ export function useXMLValidator() {
     setMandatoryTags,
     osForbiddenPatterns,
     setOsForbiddenPatterns,
+    registeredProducts,
+    setRegisteredProducts,
     validateXML,
     extractXmlMetadata,
     checkNtvStatus,

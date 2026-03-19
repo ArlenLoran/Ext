@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Upload, 
@@ -33,7 +33,9 @@ import {
   Calendar,
   Download,
   ArrowRight,
-  RefreshCw
+  RefreshCw,
+  Menu,
+  MoreVertical
 } from 'lucide-react';
 import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtml } from './services/emailService';
 import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation, downloadFileFromSharePoint, listAllXmlFilesFromFolder } from './services/sharepointService';
@@ -48,7 +50,7 @@ import { ValidationResult } from './types';
 export default function App() {
   const { notification, showNotification, setNotification } = useNotifications();
   const { results, setResults, expandedIndices, setExpandedIndices, resultsFilters, setResultsFilters, clearAll, toggleExpand, removeResult } = useResults();
-  const { mandatoryTags, setMandatoryTags, osForbiddenPatterns, setOsForbiddenPatterns, validateXML, extractXmlMetadata, checkNtvStatus, checkOsStatus } = useXMLValidator();
+  const { mandatoryTags, setMandatoryTags, osForbiddenPatterns, setOsForbiddenPatterns, registeredProducts, setRegisteredProducts, validateXML, extractXmlMetadata, checkNtvStatus, checkOsStatus } = useXMLValidator();
   
   const [recipients, setRecipients] = useState<string[]>(() => {
     const saved = localStorage.getItem('dhl_recipients');
@@ -62,6 +64,7 @@ export default function App() {
   const [newTagName, setNewTagName] = useState('');
   const [newTagRef, setNewTagRef] = useState('');
   const [newPattern, setNewPattern] = useState('');
+  const [newProduct, setNewProduct] = useState('');
 
   const {
     isSpAvailable, setIsSpAvailable,
@@ -114,10 +117,14 @@ export default function App() {
   const [sendingEmailIdx, setSendingEmailIdx] = useState<number | null>(null);
   const [isSendingBatch, setIsSendingBatch] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const [tagSearch, setTagSearch] = useState('');
   const [tagPage, setTagPage] = useState(1);
   const [patternSearch, setPatternSearch] = useState('');
   const [patternPage, setPatternPage] = useState(1);
+  const [productSearch, setProductSearch] = useState('');
+  const [productPage, setProductPage] = useState(1);
   const itemsPerPage = 10;
 
   // Check SharePoint Context on Mount
@@ -226,6 +233,20 @@ export default function App() {
   React.useEffect(() => {
     localStorage.setItem('dhl_os_forbidden_patterns', JSON.stringify(osForbiddenPatterns));
   }, [osForbiddenPatterns]);
+
+  React.useEffect(() => {
+    localStorage.setItem('dhl_registered_products', JSON.stringify(registeredProducts));
+  }, [registeredProducts]);
+
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setShowMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const addRecipient = (e: React.FormEvent) => {
     e.preventDefault();
@@ -363,6 +384,35 @@ export default function App() {
     }
   };
 
+  const addProduct = (e: React.FormEvent) => {
+    e.preventDefault();
+    const product = newProduct.trim();
+    if (!product) return;
+    if (registeredProducts.includes(product)) {
+      setNotification({ type: 'error', message: 'Produto já cadastrado.' });
+      return;
+    }
+    setRegisteredProducts([...registeredProducts, product]);
+    if (isSpInitialized) {
+      SharePointListsService.createItem('DHL_RegisteredProducts', { Title: product });
+    }
+    setNewProduct('');
+  };
+
+  const removeProduct = async (product: string) => {
+    setRegisteredProducts(registeredProducts.filter(p => p !== product));
+    if (isSpInitialized) {
+      try {
+        const items = await SharePointListsService.getItemsByFilter('DHL_RegisteredProducts', `Title eq '${product}'`, { select: ['Id'] });
+        if (items.length > 0) {
+          await SharePointListsService.deleteItem('DHL_RegisteredProducts', items[0].Id);
+        }
+      } catch (error) {
+        console.error('Erro ao remover produto do SharePoint:', error);
+      }
+    }
+  };
+
 
   const fileToBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -481,8 +531,8 @@ export default function App() {
 
       // Trigger background NTV and OS checks for new results using fileName as unique key
       newResults.forEach((res) => {
-        if (res.ncm) {
-          checkNtvStatus(res.fileName, res.ncm, setResults);
+        if (res.xProd) {
+          checkNtvStatus(res.fileName, res.xProd, setResults);
         }
         if (res.osField && res.osField !== "Não encontrado") {
           checkOsStatus(res.fileName, res.osField, setResults);
@@ -675,52 +725,76 @@ export default function App() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2 md:gap-3">
-              {/* Secondary Actions Group */}
-              <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl p-1">
+              {/* Actions Menu */}
+              <div className="relative" ref={menuRef}>
                 <button 
-                  onClick={() => setShowFullHistory(true)}
-                  className="p-2 text-gray-500 hover:bg-gray-200 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
-                  title="Histórico Completo de Validações"
+                  onClick={() => setShowMenu(!showMenu)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all font-bold text-xs uppercase tracking-widest border shadow-sm ${showMenu ? 'bg-dhl-dark text-white border-dhl-dark' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'}`}
                 >
-                  <History size={16} />
-                  <span className="hidden sm:inline">Histórico</span>
+                  <Menu size={16} />
+                  <span className="hidden sm:inline">Opções</span>
+                  <ChevronDown size={14} className={`transition-transform duration-200 ${showMenu ? 'rotate-180' : ''}`} />
                 </button>
 
-                <div className="w-px h-6 bg-gray-200 mx-1" />
-
-                <button 
-                  onClick={() => setShowRevalidation(true)}
-                  className="p-2 text-gray-500 hover:bg-gray-200 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
-                  title="Revalidação de Arquivos SharePoint"
-                >
-                  <RotateCcw size={16} />
-                  <span className="hidden sm:inline">Revalidação</span>
-                </button>
-
-                <div className="w-px h-6 bg-gray-200 mx-1" />
-
-                <button 
-                  onClick={() => setShowSettings(!showSettings)}
-                  className={`p-2 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest ${showSettings ? 'bg-dhl-dark text-white' : 'text-gray-500 hover:bg-gray-200'}`}
-                  title="Configurações do Sistema"
-                >
-                  <Settings size={16} />
-                  <span className="hidden sm:inline">Configurações</span>
-                </button>
-                
-                {results.length > 0 && (
-                  <>
-                    <div className="w-px h-6 bg-gray-200 mx-1" />
-                    <button 
-                      onClick={clearAll}
-                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
-                      title="Limpar Tudo"
+                <AnimatePresence>
+                  {showMenu && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-2xl border border-gray-100 py-2 z-50 overflow-hidden"
                     >
-                      <Trash2 size={16} />
-                      <span className="hidden sm:inline">Limpar</span>
-                    </button>
-                  </>
-                )}
+                      <div className="px-3 py-2 mb-1 border-b border-gray-50">
+                        <span className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-400">Menu de Ações</span>
+                      </div>
+                      
+                      <button 
+                        onClick={() => { setShowFullHistory(true); setShowMenu(false); }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-xs font-bold text-gray-600 hover:bg-gray-50 hover:text-dhl-dark transition-colors group"
+                      >
+                        <div className="p-1.5 bg-blue-50 rounded-lg group-hover:bg-blue-100 transition-colors">
+                          <History size={14} className="text-blue-600" />
+                        </div>
+                        Histórico Completo
+                      </button>
+
+                      <button 
+                        onClick={() => { setShowRevalidation(true); setShowMenu(false); }}
+                        className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-xs font-bold text-gray-600 hover:bg-gray-50 hover:text-dhl-dark transition-colors group"
+                      >
+                        <div className="p-1.5 bg-orange-50 rounded-lg group-hover:bg-orange-100 transition-colors">
+                          <RotateCcw size={14} className="text-orange-600" />
+                        </div>
+                        Revalidação
+                      </button>
+
+                      <button 
+                        onClick={() => { setShowSettings(!showSettings); setShowMenu(false); }}
+                        className={`w-full flex items-center gap-3 px-4 py-2.5 text-left text-xs font-bold transition-colors group ${showSettings ? 'bg-dhl-dark/5 text-dhl-dark' : 'text-gray-600 hover:bg-gray-50 hover:text-dhl-dark'}`}
+                      >
+                        <div className={`p-1.5 rounded-lg transition-colors ${showSettings ? 'bg-dhl-dark text-white' : 'bg-gray-100 group-hover:bg-gray-200'}`}>
+                          <Settings size={14} />
+                        </div>
+                        Configurações
+                      </button>
+
+                      {results.length > 0 && (
+                        <>
+                          <div className="my-1 border-t border-gray-50" />
+                          <button 
+                            onClick={() => { clearAll(); setShowMenu(false); }}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-xs font-bold text-red-500 hover:bg-red-50 transition-colors group"
+                          >
+                            <div className="p-1.5 bg-red-50 rounded-lg group-hover:bg-red-100 transition-colors">
+                              <Trash2 size={14} className="text-red-600" />
+                            </div>
+                            Limpar Tudo
+                          </button>
+                        </>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
 
               {/* Primary Actions */}
@@ -1153,6 +1227,104 @@ export default function App() {
                         );
                       })()}
                     </div>
+
+                    {/* Registered Products Section */}
+                    <div className="space-y-4 flex flex-col h-full">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-sm font-black uppercase tracking-widest text-gray-400 flex items-center gap-2">
+                          <Search size={16} /> Produtos Cadastrados (NTV)
+                        </h4>
+                        <div className="relative">
+                          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input 
+                            type="text"
+                            placeholder="Filtrar..."
+                            value={productSearch}
+                            onChange={(e) => { setProductSearch(e.target.value); setProductPage(1); }}
+                            className="pl-7 pr-2 py-1 border border-gray-200 rounded text-[10px] focus:outline-none focus:ring-1 focus:ring-dhl-red/20 w-32"
+                          />
+                        </div>
+                      </div>
+
+                      <form onSubmit={addProduct} className="flex gap-2">
+                        <input 
+                          type="text" 
+                          value={newProduct}
+                          onChange={(e) => setNewProduct(e.target.value)}
+                          placeholder="Produto (ex: PWI)..."
+                          className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-bold focus:outline-none focus:ring-2 focus:ring-dhl-red/20"
+                        />
+                        <button type="submit" className="bg-dhl-dark text-white p-2 rounded-md hover:bg-black">
+                          <Plus size={16} />
+                        </button>
+                      </form>
+
+                      <div className="flex-1 border border-gray-100 rounded-xl overflow-hidden bg-gray-50/50">
+                        <table className="w-full text-left border-collapse">
+                          <thead className="bg-gray-100/80">
+                            <tr>
+                              <th className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-500">Produto</th>
+                              <th className="px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-500 text-right">Ações</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {(() => {
+                              const filtered = registeredProducts.filter(p => p.toLowerCase().includes(productSearch.toLowerCase()));
+                              const paginated = filtered.slice((productPage - 1) * itemsPerPage, productPage * itemsPerPage);
+                              
+                              if (paginated.length === 0) {
+                                return (
+                                  <tr>
+                                    <td colSpan={2} className="px-3 py-8 text-center text-xs text-gray-400 italic">Nenhum produto cadastrado.</td>
+                                  </tr>
+                                );
+                              }
+
+                              return paginated.map((product) => (
+                                <tr key={product} className="group hover:bg-white transition-colors">
+                                  <td className="px-3 py-2">
+                                    <span className="text-xs font-bold text-gray-700 truncate block max-w-[150px]">{product}</span>
+                                  </td>
+                                  <td className="px-3 py-2 text-right">
+                                    <button onClick={() => removeProduct(product)} className="text-dhl-red hover:bg-red-50 p-1.5 rounded-md transition-colors">
+                                      <Trash2 size={12} />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ));
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Pagination */}
+                      {(() => {
+                        const filtered = registeredProducts.filter(p => p.toLowerCase().includes(productSearch.toLowerCase()));
+                        const totalPages = Math.ceil(filtered.length / itemsPerPage);
+                        if (totalPages <= 1) return null;
+                        return (
+                          <div className="flex items-center justify-between pt-2">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Pág. {productPage} de {totalPages}</span>
+                            <div className="flex gap-1">
+                              <button 
+                                disabled={productPage === 1}
+                                onClick={() => setProductPage(p => p - 1)}
+                                className="p-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-100"
+                              >
+                                <ChevronLeft size={14} />
+                              </button>
+                              <button 
+                                disabled={productPage === totalPages}
+                                onClick={() => setProductPage(p => p + 1)}
+                                className="p-1 rounded border border-gray-200 disabled:opacity-30 hover:bg-gray-100"
+                              >
+                                <ChevronRight size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </div>
               </motion.div>
@@ -1371,14 +1543,14 @@ export default function App() {
                           
                           const label = `${m.name} (${m.tag})`;
 
-                          // Special handling for NCM with NTV check
-                          if (m.tag.toLowerCase() === 'ncm') {
+                          // Special handling for xProd with NTV check
+                          if (m.tag.toLowerCase() === 'xprod') {
                             return (
                               <tr key={m.tag} className="group hover:bg-gray-50 transition-colors">
-                                <td className="py-4 font-bold text-gray-600">{label}</td>
+                                <td className="py-4 font-bold text-gray-600">Validação de Item (xProd)</td>
                                 <td className="py-4 font-mono">
                                   <div className="flex flex-col gap-1">
-                                    <span>{value || "---"}</span>
+                                    <span className="text-xs">{value || "---"}</span>
                                     {value && (
                                       <div className="flex items-center gap-2">
                                         {result.ntvStatus === 'loading' ? (
@@ -1387,11 +1559,11 @@ export default function App() {
                                           </span>
                                         ) : result.ntvStatus === 'registered' ? (
                                           <span className="text-[10px] text-green-600 font-bold flex items-center gap-1">
-                                            <CheckCircle2 size={10} /> Já cadastrado no sistema NTV
+                                            <CheckCircle2 size={10} /> Item cadastrado no sistema NTV
                                           </span>
                                         ) : result.ntvStatus === 'not_registered' ? (
                                           <span className="text-[10px] text-orange-600 font-bold flex items-center gap-1">
-                                            <AlertCircle size={10} /> Não cadastrado no NTV
+                                            <AlertCircle size={10} /> Item não cadastrado no NTV
                                           </span>
                                         ) : result.ntvStatus === 'error' ? (
                                           <span className="text-[10px] text-red-500 flex items-center gap-1">
@@ -1476,8 +1648,8 @@ export default function App() {
                             </tr>
                           );
                         })}
-                        {/* Always show xProd if available */}
-                        {result.xProd && (
+                        {/* Always show xProd if available and not already shown as mandatory */}
+                        {result.xProd && !mandatoryTags.some(t => t.tag.toLowerCase() === 'xprod') && (
                           <tr className="group hover:bg-gray-50 transition-colors">
                             <td className="py-4 font-bold text-gray-600">Descrição do Produto (xProd)</td>
                             <td className="py-4 font-mono text-[10px] max-w-[300px] truncate" title={result.xProd}>
