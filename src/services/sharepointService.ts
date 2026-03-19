@@ -58,8 +58,8 @@ function normalizeFolderServerRelativeUrl(folderPath: string): string {
 function buildRenamedXmlFileName(fileName: string): string {
   const trimmed = String(fileName || '').trim();
   if (!trimmed) throw new Error('Nome de arquivo inválido para renomeação.');
-  if (/validado\.xml$/i.test(trimmed)) return trimmed;
-  return trimmed.replace(/\.xml$/i, ' validado.xml');
+  if (/^validado_/i.test(trimmed)) return trimmed;
+  return `validado_${trimmed}`;
 }
 
 function buildDecodedUrlApiSegment(serverRelativeUrl: string): string {
@@ -109,7 +109,7 @@ export async function listAllXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'):
     .map(item => ({
       name: item.Name,
       serverRelativeUrl: item.ServerRelativeUrl,
-      isValidated: /validado\.xml$/i.test(item.Name),
+      isValidated: /^validado_/i.test(item.Name),
       timeCreated: item.TimeCreated
     }));
 }
@@ -131,8 +131,8 @@ export async function listXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'): Pr
 
   const data = await response.json();
   const files = (data?.d?.results || []) as Array<{ Name: string; ServerRelativeUrl: string }>;
-  // Filter for .xml files and EXCLUDE those already marked as "validado"
-  const xmlFiles = files.filter((item) => /\.xml$/i.test(item.Name) && !/validado\.xml$/i.test(item.Name));
+  // Filter for .xml files and EXCLUDE those already marked as "validado" (prefix validado_)
+  const xmlFiles = files.filter((item) => /\.xml$/i.test(item.Name) && !/^validado_/i.test(item.Name));
 
   const downloaded = await Promise.all(
     xmlFiles.map(async (item) => {
@@ -190,8 +190,8 @@ export async function revertXmlFileValidation(serverRelativeUrl: string): Promis
   const segments = currentUrl.split('/');
   const currentName = segments.pop() || '';
   
-  // Remove " validado" from the end, before .xml
-  const originalName = currentName.replace(/\svalidado\.xml$/i, '.xml');
+  // Remove "validado_" from the beginning
+  const originalName = currentName.replace(/^validado_/i, '');
 
   if (originalName === currentName) return currentUrl;
 

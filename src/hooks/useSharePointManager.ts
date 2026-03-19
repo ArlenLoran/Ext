@@ -100,10 +100,11 @@ export function useSharePointManager(
 
         enrichedFiles = enrichedFiles.map(file => {
           const originalName = file.name;
-          const validatedName = originalName.replace('.xml', ' validado.xml');
+          const validatedName = file.isValidated ? originalName : `validado_${originalName}`;
+          const unvalidatedName = file.isValidated ? originalName.replace(/^validado_/i, '') : originalName;
           
           const record = history.find(h => 
-            h.Title === originalName || h.Title === validatedName
+            h.Title === originalName || h.Title === validatedName || h.Title === unvalidatedName
           );
           
           if (record) {
@@ -197,6 +198,7 @@ export function useSharePointManager(
     try {
       const filter = `Created ge datetime'${revalidationStartDate}T00:00:00Z' and Created le datetime'${revalidationEndDate}T23:59:59Z'`;
       const items = await SharePointListsService.getItems('DHL_ValidationHistory', {
+        select: ['Id', 'Title', 'ServerRelativeUrl', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd', 'Status', 'ValidationDate'],
         orderBy: 'Id desc',
         top: 2000,
         filter
@@ -226,6 +228,7 @@ export function useSharePointManager(
     try {
       const filter = `Created ge datetime'${fullHistoryStartDate}T00:00:00Z' and Created le datetime'${fullHistoryEndDate}T23:59:59Z'`;
       const items = await SharePointListsService.getItems('DHL_FullHistory', {
+        select: ['Id', 'Title', 'ServerRelativeUrl', 'Status', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd', 'UserEmail', 'Source', 'ValidationDate'],
         orderBy: 'Id desc',
         top: 5000,
         filter
@@ -340,6 +343,7 @@ export function useSharePointManager(
       await SharePointListsService.ensureList('DHL_FullHistory', 'Histórico completo de todas as validações', [
         { title: 'Title', type: 'Text', required: true },
         { title: 'Status', type: 'Text', required: true },
+        { title: 'ServerRelativeUrl', type: 'Text' },
         { title: 'nNF', type: 'Text' },
         { title: 'CNPJ', type: 'Text' },
         { title: 'OS', type: 'Text' },

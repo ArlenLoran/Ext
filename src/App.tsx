@@ -189,7 +189,7 @@ export default function App() {
           // Rename the file if it's valid
           const res = await validateXML(xmlFile);
           if (res.isValid) {
-            const newName = fileName.replace(/\.xml$/i, ' validado.xml');
+            const newName = `validado_${fileName}`;
             const renamedFile = new File([await xmlFile.arrayBuffer()], newName, { type: 'text/xml' });
             
             // Move/Rename in SharePoint
@@ -552,6 +552,7 @@ export default function App() {
             await SharePointListsService.createItem('DHL_FullHistory', {
               Title: res.fileName,
               Status: res.isValid ? 'Válido' : 'Inválido',
+              ServerRelativeUrl: res.sharepointUrl || '',
               nNF: res.nNF || '',
               CNPJ: res.cnpj || '',
               OS: res.osField || '',
@@ -2134,6 +2135,16 @@ export default function App() {
                           </div>
                           
                           <div className="flex items-center gap-2">
+                            {item.ServerRelativeUrl && (
+                              <button
+                                onClick={() => validateSpFileManually({ name: item.Title, serverRelativeUrl: item.ServerRelativeUrl })}
+                                className="px-3 py-2 bg-dhl-dark hover:bg-black text-white rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all"
+                                title="Revalidar este arquivo"
+                              >
+                                <ArrowRight size={14} />
+                                Revalidar
+                              </button>
+                            )}
                             <button
                               onClick={() => downloadFromSharePoint(item.ServerRelativeUrl, item.Title)}
                               className="p-2 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-lg transition-all border border-transparent hover:border-gray-200"
@@ -2274,19 +2285,20 @@ export default function App() {
                       <th className="p-4 text-[10px] font-black uppercase tracking-widest text-gray-400">NF / CNPJ</th>
                       <th className="p-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Usuário</th>
                       <th className="p-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Origem</th>
+                      <th className="p-4 text-[10px] font-black uppercase tracking-widest text-gray-400 text-right">Ações</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {isFetchingFullHistory && fullHistory.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-20 text-center">
+                        <td colSpan={7} className="p-20 text-center">
                           <Loader2 size={48} className="animate-spin mx-auto mb-4 opacity-20" />
                           <p className="font-black uppercase tracking-widest text-sm italic text-gray-400">Carregando histórico...</p>
                         </td>
                       </tr>
                     ) : fullHistory.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="p-20 text-center">
+                        <td colSpan={7} className="p-20 text-center">
                           <History size={64} className="mx-auto mb-4 opacity-10 text-gray-300" />
                           <p className="font-black uppercase tracking-widest text-sm italic text-gray-300">Nenhum registro encontrado</p>
                         </td>
@@ -2326,6 +2338,28 @@ export default function App() {
                               <span className={`text-[9px] font-bold uppercase px-2 py-1 rounded border ${item.Source === 'SharePoint' ? 'border-blue-200 bg-blue-50 text-blue-600' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
                                 {item.Source}
                               </span>
+                            </td>
+                            <td className="p-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                {item.Source === 'SharePoint' && item.ServerRelativeUrl && (
+                                  <button
+                                    onClick={() => validateSpFileManually({ name: item.Title, serverRelativeUrl: item.ServerRelativeUrl })}
+                                    className="p-2 bg-dhl-dark hover:bg-black text-white rounded-lg transition-all"
+                                    title="Revalidar arquivo"
+                                  >
+                                    <ArrowRight size={14} />
+                                  </button>
+                                )}
+                                {item.Source === 'SharePoint' && item.ServerRelativeUrl && (
+                                  <button
+                                    onClick={() => downloadFromSharePoint(item.ServerRelativeUrl, item.Title)}
+                                    className="p-2 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-lg transition-all"
+                                    title="Baixar XML"
+                                  >
+                                    <Download size={14} />
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ))
