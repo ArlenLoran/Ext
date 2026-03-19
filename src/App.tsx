@@ -133,34 +133,67 @@ export default function App() {
     }
   }, [checkSpInitialization, fetchSpStats, setIsSpAvailable]);
 
-  const handleSharePointImport = async (files: any[]) => {
-    if (files.length === 0) return;
+  const handleSharePointImport = async (filesOrEvent?: any[] | React.MouseEvent) => {
+    let filesToProcess: any[] = [];
+    
+    if (Array.isArray(filesOrEvent)) {
+      filesToProcess = filesOrEvent;
+    } else {
+      // Se for um evento ou chamado sem argumentos, busca os arquivos pendentes no SharePoint
+      setIsFetchingSharePoint(true);
+      try {
+        const fetchedFiles = await listXmlFilesFromFolder('SiteAssets/XMLs');
+        if (fetchedFiles.length === 0) {
+          showNotification('success', 'Nenhum arquivo XML pendente no SharePoint.');
+          setIsFetchingSharePoint(false);
+          return;
+        }
+        filesToProcess = fetchedFiles;
+      } catch (error) {
+        console.error('Erro ao buscar arquivos do SharePoint:', error);
+        showNotification('error', 'Erro ao buscar arquivos do SharePoint.');
+        setIsFetchingSharePoint(false);
+        return;
+      }
+    }
+
+    if (filesToProcess.length === 0) return;
     
     setIsFetchingSharePoint(true);
     try {
       const spUrlMap: Record<string, string> = {};
       const importedFiles: File[] = [];
 
-      for (const file of files) {
+      for (const file of filesToProcess) {
         try {
-          const blob = await SharePointListsService.downloadFile(file.serverRelativeUrl);
-          const xmlFile = new File([blob], file.name, { type: 'text/xml' });
+          // Se já tivermos o objeto File (vindo de listXmlFilesFromFolder), usamos ele
+          // Caso contrário, baixamos o arquivo
+          let xmlFile: File;
+          if (file.file instanceof File) {
+            xmlFile = file.file;
+          } else {
+            const blob = await SharePointListsService.downloadFile(file.serverRelativeUrl);
+            xmlFile = new File([blob], file.name, { type: 'text/xml' });
+          }
           
+          const fileName = file.name;
+          const serverRelativeUrl = file.serverRelativeUrl;
+
           // Rename the file if it's valid
           const res = await validateXML(xmlFile);
           if (res.isValid) {
-            const newName = `VALIDADO_${file.name}`;
-            const renamedFile = new File([blob], newName, { type: 'text/xml' });
+            const newName = fileName.replace(/\.xml$/i, ' validado.xml');
+            const renamedFile = new File([await xmlFile.arrayBuffer()], newName, { type: 'text/xml' });
             
             // Move/Rename in SharePoint
-            const folderPath = file.serverRelativeUrl.substring(0, file.serverRelativeUrl.lastIndexOf('/'));
+            const folderPath = serverRelativeUrl.substring(0, serverRelativeUrl.lastIndexOf('/'));
             const newUrl = `${folderPath}/${newName}`;
-            await SharePointListsService.moveFile(file.serverRelativeUrl, newUrl);
+            await SharePointListsService.moveFile(serverRelativeUrl, newUrl);
             
             spUrlMap[newName] = newUrl;
             importedFiles.push(renamedFile);
           } else {
-            spUrlMap[file.name] = file.serverRelativeUrl;
+            spUrlMap[fileName] = serverRelativeUrl;
             importedFiles.push(xmlFile);
           }
         } catch (err) {
@@ -443,8 +476,9 @@ export default function App() {
       }
     }
     
-    setResults(prev => {
-      const combined = [...newResults, ...prev];
+    if (newResults.length > 0) {
+      setResults(prev => [...newResults, ...prev]);
+
       // Trigger background NTV and OS checks for new results using fileName as unique key
       newResults.forEach((res) => {
         if (res.ncm) {
@@ -454,34 +488,33 @@ export default function App() {
           checkOsStatus(res.fileName, res.osField, setResults);
         }
       });
-      return combined;
-    });
 
-    // Log to Full History if SharePoint context is available
-    if (SharePointListsService.isContextAvailable()) {
-      const userInfo = SharePointListsService.getUserInfo();
-      
-      // Use Promise.all to ensure all items are created before refreshing the list
-      Promise.all(newResults.map(async (res) => {
-        try {
-          await SharePointListsService.createItem('DHL_FullHistory', {
-            Title: res.fileName,
-            Status: res.isValid ? 'Válido' : 'Inválido',
-            nNF: res.nNF || '',
-            CNPJ: res.cnpj || '',
-            OS: res.osField || '',
-            NCM: res.ncm || '',
-            xProd: res.xProd || '',
-            UserEmail: userInfo.email || 'Usuário Local',
-            Source: res.sharepointUrl ? 'SharePoint' : 'Local',
-            ValidationDate: new Date().toISOString()
-          });
-        } catch (err) {
-          console.error('Erro ao logar no histórico completo:', err);
-        }
-      })).then(() => {
-        // No automatic refresh as per user request
-      });
+      // Log to Full History if SharePoint context is available
+      if (SharePointListsService.isContextAvailable()) {
+        const userInfo = SharePointListsService.getUserInfo();
+        
+        // Use Promise.all to ensure all items are created before refreshing the list
+        Promise.all(newResults.map(async (res) => {
+          try {
+            await SharePointListsService.createItem('DHL_FullHistory', {
+              Title: res.fileName,
+              Status: res.isValid ? 'Válido' : 'Inválido',
+              nNF: res.nNF || '',
+              CNPJ: res.cnpj || '',
+              OS: res.osField || '',
+              NCM: res.ncm || '',
+              xProd: res.xProd || '',
+              UserEmail: userInfo.email || 'Usuário Local',
+              Source: res.sharepointUrl ? 'SharePoint' : 'Local',
+              ValidationDate: new Date().toISOString()
+            });
+          } catch (err) {
+            console.error('Erro ao logar no histórico completo:', err);
+          }
+        })).then(() => {
+          // No automatic refresh as per user request
+        });
+      }
     }
 
     return newResults;
