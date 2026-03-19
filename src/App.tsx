@@ -48,7 +48,7 @@ import { ValidationResult } from './types';
 export default function App() {
   const { notification, showNotification, setNotification } = useNotifications();
   const { results, setResults, expandedIndices, setExpandedIndices, resultsFilters, setResultsFilters, clearAll, toggleExpand, removeResult } = useResults();
-  const { mandatoryTags, setMandatoryTags, osForbiddenPatterns, setOsForbiddenPatterns, validateXML, extractXmlMetadata, checkNtvStatus } = useXMLValidator();
+  const { mandatoryTags, setMandatoryTags, osForbiddenPatterns, setOsForbiddenPatterns, validateXML, extractXmlMetadata, checkNtvStatus, checkOsStatus } = useXMLValidator();
   
   const [recipients, setRecipients] = useState<string[]>(() => {
     const saved = localStorage.getItem('dhl_recipients');
@@ -114,7 +114,6 @@ export default function App() {
   const [sendingEmailIdx, setSendingEmailIdx] = useState<number | null>(null);
   const [isSendingBatch, setIsSendingBatch] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showMenu, setShowMenu] = useState(false);
   const [tagSearch, setTagSearch] = useState('');
   const [tagPage, setTagPage] = useState(1);
   const [patternSearch, setPatternSearch] = useState('');
@@ -446,10 +445,13 @@ export default function App() {
     
     setResults(prev => {
       const combined = [...newResults, ...prev];
-      // Trigger background NTV checks for new results using fileName as unique key
+      // Trigger background NTV and OS checks for new results using fileName as unique key
       newResults.forEach((res) => {
         if (res.ncm) {
           checkNtvStatus(res.fileName, res.ncm, setResults);
+        }
+        if (res.osField && res.osField !== "Não encontrado") {
+          checkOsStatus(res.fileName, res.osField, setResults);
         }
       });
       return combined;
@@ -600,6 +602,14 @@ export default function App() {
                 </div>
               </div>
             </div>
+
+            <button 
+              onClick={() => setShowSpManager(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-gray-50 border border-gray-200 rounded-xl transition-all group shadow-sm"
+            >
+              <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 group-hover:text-dhl-dark">Gerenciar Pasta</span>
+              <ChevronRight size={14} className="text-gray-400 group-hover:text-dhl-red transition-colors" />
+            </button>
           </motion.div>
         )}
 
@@ -631,111 +641,53 @@ export default function App() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 md:gap-3 relative">
-              {/* Menu de Opções Dropdown */}
-              <div className="relative">
+            <div className="flex flex-wrap items-center gap-2 md:gap-3">
+              {/* Secondary Actions Group */}
+              <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl p-1">
                 <button 
-                  onClick={() => setShowMenu(!showMenu)}
-                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl transition-all font-black text-xs uppercase tracking-widest shadow-md border ${showMenu ? 'bg-dhl-dark text-white border-dhl-dark' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                  onClick={() => setShowFullHistory(true)}
+                  className="p-2 text-gray-500 hover:bg-gray-200 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
+                  title="Histórico Completo de Validações"
                 >
-                  <Settings size={16} className={showMenu ? 'animate-spin-slow' : ''} />
-                  <span>Opções</span>
-                  <ChevronDown size={14} className={`transition-transform duration-300 ${showMenu ? 'rotate-180' : ''}`} />
+                  <History size={16} />
+                  <span className="hidden sm:inline">Histórico</span>
                 </button>
 
-                <AnimatePresence>
-                  {showMenu && (
-                    <>
-                      {/* Overlay to close menu */}
-                      <div 
-                        className="fixed inset-0 z-40" 
-                        onClick={() => setShowMenu(false)} 
-                      />
-                      
-                      <motion.div
-                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                        className="absolute right-0 mt-2 w-64 bg-white border border-gray-200 rounded-2xl shadow-2xl z-50 overflow-hidden"
-                      >
-                        <div className="p-2 space-y-1">
-                          <div className="px-3 py-2 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 mb-1">
-                            Ferramentas & Gestão
-                          </div>
-                          
-                          <button 
-                            onClick={() => { setShowFullHistory(true); setShowMenu(false); }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-600 hover:bg-gray-50 hover:text-dhl-dark rounded-xl transition-all text-left group"
-                          >
-                            <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg group-hover:bg-blue-100 transition-colors">
-                              <History size={16} />
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="text-xs font-black uppercase tracking-widest">Histórico</span>
-                              <span className="text-[9px] text-gray-400 font-medium">Todas as validações</span>
-                            </div>
-                          </button>
+                <div className="w-px h-6 bg-gray-200 mx-1" />
 
-                          <button 
-                            onClick={() => { setShowRevalidation(true); setShowMenu(false); }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-600 hover:bg-gray-50 hover:text-dhl-dark rounded-xl transition-all text-left group"
-                          >
-                            <div className="p-1.5 bg-orange-50 text-orange-600 rounded-lg group-hover:bg-orange-100 transition-colors">
-                              <RotateCcw size={16} />
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="text-xs font-black uppercase tracking-widest">Revalidação</span>
-                              <span className="text-[9px] text-gray-400 font-medium">Arquivos SharePoint</span>
-                            </div>
-                          </button>
+                <button 
+                  onClick={() => setShowRevalidation(true)}
+                  className="p-2 text-gray-500 hover:bg-gray-200 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
+                  title="Revalidação de Arquivos SharePoint"
+                >
+                  <RotateCcw size={16} />
+                  <span className="hidden sm:inline">Revalidação</span>
+                </button>
 
-                          <button 
-                            onClick={() => { setShowSpManager(true); setShowMenu(false); }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-600 hover:bg-gray-50 hover:text-dhl-dark rounded-xl transition-all text-left group"
-                          >
-                            <div className="p-1.5 bg-purple-50 text-purple-600 rounded-lg group-hover:bg-purple-100 transition-colors">
-                              <FileSearch size={16} />
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="text-xs font-black uppercase tracking-widest">Gerenciar Pasta</span>
-                              <span className="text-[9px] text-gray-400 font-medium">Explorar SiteAssets</span>
-                            </div>
-                          </button>
+                <div className="w-px h-6 bg-gray-200 mx-1" />
 
-                          <div className="h-px bg-gray-100 my-1 mx-2" />
-
-                          <button 
-                            onClick={() => { setShowSettings(true); setShowMenu(false); }}
-                            className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-600 hover:bg-gray-50 hover:text-dhl-dark rounded-xl transition-all text-left group"
-                          >
-                            <div className="p-1.5 bg-gray-100 text-gray-600 rounded-lg group-hover:bg-gray-200 transition-colors">
-                              <Settings size={16} />
-                            </div>
-                            <div className="flex flex-col">
-                              <span className="text-xs font-black uppercase tracking-widest">Configurações</span>
-                              <span className="text-[9px] text-gray-400 font-medium">Regras e Alertas</span>
-                            </div>
-                          </button>
-
-                          {results.length > 0 && (
-                            <button 
-                              onClick={() => { clearAll(); setShowMenu(false); }}
-                              className="w-full flex items-center gap-3 px-3 py-2.5 text-red-500 hover:bg-red-50 rounded-xl transition-all text-left group"
-                            >
-                              <div className="p-1.5 bg-red-100 text-red-600 rounded-lg group-hover:bg-red-200 transition-colors">
-                                <Trash2 size={16} />
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-xs font-black uppercase tracking-widest">Limpar Tudo</span>
-                                <span className="text-[9px] text-red-400 font-medium">Remover resultados</span>
-                              </div>
-                            </button>
-                          )}
-                        </div>
-                      </motion.div>
-                    </>
-                  )}
-                </AnimatePresence>
+                <button 
+                  onClick={() => setShowSettings(!showSettings)}
+                  className={`p-2 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest ${showSettings ? 'bg-dhl-dark text-white' : 'text-gray-500 hover:bg-gray-200'}`}
+                  title="Configurações do Sistema"
+                >
+                  <Settings size={16} />
+                  <span className="hidden sm:inline">Configurações</span>
+                </button>
+                
+                {results.length > 0 && (
+                  <>
+                    <div className="w-px h-6 bg-gray-200 mx-1" />
+                    <button 
+                      onClick={clearAll}
+                      className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-all flex items-center gap-2 font-bold text-xs uppercase tracking-widest"
+                      title="Limpar Tudo"
+                    >
+                      <Trash2 size={16} />
+                      <span className="hidden sm:inline">Limpar</span>
+                    </button>
+                  </>
+                )}
               </div>
 
               {/* Primary Actions */}
@@ -747,7 +699,7 @@ export default function App() {
                 {isFetchingSharePoint ? (
                   <><Loader2 size={16} className="animate-spin" /> BUSCANDO...</>
                 ) : (
-                  <><FileSearch size={16} /> IMPORTAR</>
+                  <><FileSearch size={16} /> IMPORTAR SHAREPOINT</>
                 )}
               </button>
 
@@ -1414,7 +1366,7 @@ export default function App() {
                                           </span>
                                         ) : null}
                                         <button 
-                                          onClick={() => checkNtvStatus(idx, value)}
+                                          onClick={() => checkNtvStatus(result.fileName, value, setResults)}
                                           className="text-[9px] underline text-gray-400 hover:text-dhl-red uppercase tracking-tighter"
                                         >
                                           Revalidar
@@ -1430,15 +1382,48 @@ export default function App() {
                             );
                           }
 
-                          // Special handling for infCpl to show extracted OS
+                          // Special handling for infCpl to show extracted OS and its status
                           if (m.tag.toLowerCase() === 'infcpl') {
                             return (
                               <tr key={m.tag} className="group hover:bg-gray-50 transition-colors">
                                 <td className="py-4 font-bold text-gray-600">{m.name} (infCpl)</td>
                                 <td className="py-4">
-                                  <span className={`font-mono px-2 py-1 rounded ${result.osField !== "Não encontrado" ? 'bg-dhl-yellow/20 text-dhl-dark font-bold' : 'text-red-500'}`}>
-                                    {result.osField}
-                                  </span>
+                                  <div className="flex flex-col gap-1">
+                                    <span className={`font-mono px-2 py-1 rounded w-fit ${result.osField !== "Não encontrado" ? 'bg-dhl-yellow/20 text-dhl-dark font-bold' : 'text-red-500'}`}>
+                                      {result.osField}
+                                    </span>
+                                    {result.osField !== "Não encontrado" && (
+                                      <div className="flex items-center gap-2">
+                                        {result.osStatus === 'loading' ? (
+                                          <span className="text-[10px] text-blue-500 flex items-center gap-1 animate-pulse">
+                                            <Loader2 size={10} className="animate-spin" /> Verificando OS...
+                                          </span>
+                                        ) : result.osStatus === 'received' ? (
+                                          <span className="text-[10px] text-green-600 font-bold flex items-center gap-1">
+                                            <CheckCircle2 size={10} /> OS está no sistema
+                                          </span>
+                                        ) : result.osStatus === 'not_received' ? (
+                                          <span className="text-[10px] text-orange-600 font-bold flex items-center gap-1">
+                                            <AlertCircle size={10} /> OS não está no sistema
+                                          </span>
+                                        ) : result.osStatus === 'error' ? (
+                                          <span className="text-[10px] text-red-500 flex items-center gap-1">
+                                            <XCircle size={10} /> Erro na consulta OS
+                                          </span>
+                                        ) : result.osStatus === 'not_found' ? (
+                                          <span className="text-[10px] text-gray-400 italic">
+                                            OS não identificada
+                                          </span>
+                                        ) : null}
+                                        <button 
+                                          onClick={() => checkOsStatus(result.fileName, result.osField, setResults)}
+                                          className="text-[9px] underline text-gray-400 hover:text-dhl-red uppercase tracking-tighter"
+                                        >
+                                          Revalidar
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="py-4">
                                   {result.osField !== "Não encontrado" ? <CheckCircle2 className="text-green-500" size={18} /> : <AlertCircle className="text-red-500" size={18} />}

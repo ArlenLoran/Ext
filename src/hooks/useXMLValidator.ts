@@ -292,6 +292,88 @@ export function useXMLValidator() {
     }
   }, []);
 
+  const checkOsStatus = useCallback(async (fileName: string, osField: string, setResults: React.Dispatch<React.SetStateAction<ValidationResult[]>>) => {
+    if (!osField || osField === "Não encontrado") {
+      setResults(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(r => r.fileName === fileName);
+        if (idx !== -1) {
+          updated[idx] = { ...updated[idx], osStatus: 'not_found' };
+        }
+        return updated;
+      });
+      return;
+    }
+    
+    const osNumberMatch = osField.match(/\d+/);
+    if (!osNumberMatch) {
+      setResults(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(r => r.fileName === fileName);
+        if (idx !== -1) {
+          updated[idx] = { ...updated[idx], osStatus: 'not_found' };
+        }
+        return updated;
+      });
+      return;
+    }
+    const osNumber = osNumberMatch[0];
+
+    setResults(prev => {
+      const updated = [...prev];
+      const idx = updated.findIndex(r => r.fileName === fileName);
+      if (idx !== -1) {
+        updated[idx] = { ...updated[idx], osStatus: 'loading' };
+      }
+      return updated;
+    });
+
+    const url = "https://51a805d34213e248a3506f5db8fe28.55.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/655aac37bdea49b1b1221a2f37198754/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=-2l0x4h5cwmpZ20RCIbMrzaR0860ka4aB8_dDOVQQHQ";
+    
+    const payload = {
+      query: `SELECT * FROM RIMHDR WHERE WAYBIL = '${osNumber}'`,
+      id_score: "12345"
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      const contentType = response.headers.get("content-type");
+      let result;
+      if (contentType && contentType.includes("application/json")) {
+        result = await response.json();
+      } else {
+        const text = await response.text();
+        try { result = JSON.parse(text); } catch { result = text; }
+      }
+
+      const isReceived = Array.isArray(result) && result.length > 0;
+      
+      setResults(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(r => r.fileName === fileName);
+        if (idx !== -1) {
+          updated[idx] = { ...updated[idx], osStatus: isReceived ? 'received' : 'not_received' };
+        }
+        return updated;
+      });
+    } catch (error) {
+      console.error("Erro ao verificar OS:", error);
+      setResults(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(r => r.fileName === fileName);
+        if (idx !== -1) {
+          updated[idx] = { ...updated[idx], osStatus: 'error' };
+        }
+        return updated;
+      });
+    }
+  }, []);
+
   return {
     mandatoryTags,
     setMandatoryTags,
@@ -299,6 +381,7 @@ export function useXMLValidator() {
     setOsForbiddenPatterns,
     validateXML,
     extractXmlMetadata,
-    checkNtvStatus
+    checkNtvStatus,
+    checkOsStatus
   };
 }

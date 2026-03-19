@@ -5,7 +5,6 @@
   --color-dhl-red: #D40511;
   --color-dhl-dark: #1D1D1B;
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --animate-spin-slow: spin 3s linear infinite;
 }
 
 body {

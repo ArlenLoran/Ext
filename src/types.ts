@@ -13,6 +13,7 @@ export interface ValidationResult {
   originalFile: File;
   sent: boolean;
   ntvStatus?: 'loading' | 'registered' | 'not_registered' | 'error';
+  osStatus?: 'loading' | 'received' | 'not_received' | 'error' | 'not_found';
   sharepointUrl?: string;
   spValidated?: boolean;
 }
