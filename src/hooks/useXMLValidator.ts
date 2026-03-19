@@ -30,7 +30,7 @@ export function useXMLValidator() {
 
   const [osForbiddenPatterns, setOsForbiddenPatterns] = useState<string[]>(() => {
     const saved = localStorage.getItem('dhl_os_forbidden_patterns');
-    return saved ? JSON.parse(saved) : ["OS:\\s+\\d+", "OS:\\d+[\\.,]\\d+"];
+    return saved ? JSON.parse(saved) : ["OS:\\d+", "OS:  +\\d+", "OS\\s+: \\d+", "OS: \\d+[\\.,/\\-]"];
   });
 
   const [registeredProducts, setRegisteredProducts] = useState<string[]>(() => {
@@ -170,12 +170,12 @@ export function useXMLValidator() {
       }
     });
 
-    const osMatch = infCpl.match(/OS:(\d+)/);
+    const osMatch = infCpl.match(/OS: (\d+)/);
     const osValue = osMatch ? osMatch[0] : "";
     
     if (!osValue) {
       if (infCpl.toLowerCase().includes("os:")) {
-        errors.push("Campo OS encontrado mas em formato inválido (deve ser 'OS:12345678' sem espaços ou pontos).");
+        errors.push("Campo OS encontrado mas em formato inválido (deve ser 'OS: 12345678' com exatamente um espaço após o dois pontos e sem caracteres especiais).");
       } else {
         errors.push("Campo OS não encontrado nas informações complementares (infCpl).");
       }
@@ -185,7 +185,7 @@ export function useXMLValidator() {
           const regex = new RegExp(patternStr, 'i');
           const match = infCpl.match(regex);
           if (match) {
-            errors.push(`Aviso: Detectado possível formato inválido próximo a '${match[0]}'. O padrão correto é 'OS:62669329'.`);
+            errors.push(`Aviso: Detectado possível formato inválido próximo a '${match[0]}'. O padrão correto é 'OS: 62669329'.`);
           }
         } catch (e) {
           console.error("Invalid regex pattern:", patternStr);

@@ -1171,7 +1171,7 @@ export default function App() {
                           type="text" 
                           value={newPattern}
                           onChange={(e) => setNewPattern(e.target.value)}
-                          placeholder="Regex (ex: OS:\s+)..."
+                          placeholder="Regex (ex: OS:\d+)..."
                           className="flex-1 px-3 py-2 border border-gray-300 rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-dhl-red/20"
                         />
                         <button type="submit" className="bg-dhl-dark text-white p-2 rounded-md hover:bg-black">
@@ -2424,7 +2424,7 @@ export default function App() {
             <h4 className="font-bold text-sm uppercase tracking-widest mb-4">Regras de Negócio</h4>
             <ul className="text-xs text-gray-500 space-y-2">
               <li>• Validação de nNF, CNPJ e NCM</li>
-              <li>• Verificação de padrão OS (OS:00000000)</li>
+              <li>• Verificação de padrão OS (OS: 00000000)</li>
               <li>• Suporte a NFe Layout 4.00</li>
               <li>• Processamento em lote</li>
             </ul>
