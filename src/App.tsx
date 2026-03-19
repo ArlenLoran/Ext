@@ -2149,9 +2149,9 @@ export default function App() {
                           </div>
                           
                           <div className="flex items-center gap-2">
-                            {item.FileRelativeUrl && (
+                            {item.ServerRelativeUrl && (
                               <button
-                                onClick={() => validateSpFileManually({ name: item.Title, serverRelativeUrl: item.FileRelativeUrl })}
+                                onClick={() => validateSpFileManually({ name: item.Title, serverRelativeUrl: item.ServerRelativeUrl })}
                                 className="px-3 py-2 bg-dhl-dark hover:bg-black text-white rounded-lg text-[10px] font-black uppercase tracking-widest flex items-center gap-2 transition-all"
                                 title="Revalidar este arquivo"
                               >
@@ -2160,7 +2160,7 @@ export default function App() {
                               </button>
                             )}
                             <button
-                              onClick={() => downloadFromSharePoint(item.FileRelativeUrl, item.Title)}
+                              onClick={() => downloadFromSharePoint(item.ServerRelativeUrl, item.Title)}
                               className="p-2 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-lg transition-all border border-transparent hover:border-gray-200"
                               title="Baixar XML do SharePoint"
                             >
@@ -2355,18 +2355,18 @@ export default function App() {
                             </td>
                             <td className="p-4 text-right">
                               <div className="flex items-center justify-end gap-2">
-                                {item.Source === 'SharePoint' && item.FileRelativeUrl && (
+                                {item.Source === 'SharePoint' && item.ServerRelativeUrl && (
                                   <button
-                                    onClick={() => validateSpFileManually({ name: item.Title, serverRelativeUrl: item.FileRelativeUrl })}
+                                    onClick={() => validateSpFileManually({ name: item.Title, serverRelativeUrl: item.ServerRelativeUrl })}
                                     className="p-2 bg-dhl-dark hover:bg-black text-white rounded-lg transition-all"
                                     title="Revalidar arquivo"
                                   >
                                     <ArrowRight size={14} />
                                   </button>
                                 )}
-                                {item.Source === 'SharePoint' && item.FileRelativeUrl && (
+                                {item.Source === 'SharePoint' && item.ServerRelativeUrl && (
                                   <button
-                                    onClick={() => downloadFromSharePoint(item.FileRelativeUrl, item.Title)}
+                                    onClick={() => downloadFromSharePoint(item.ServerRelativeUrl, item.Title)}
                                     className="p-2 bg-gray-50 hover:bg-gray-100 text-gray-500 rounded-lg transition-all"
                                     title="Baixar XML"
                                   >
