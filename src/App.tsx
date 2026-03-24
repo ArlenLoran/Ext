@@ -39,7 +39,7 @@ import {
 } from 'lucide-react';
 import { sendEmail, buildXmlDivergenceEmailHtml, buildBatchXmlDivergenceEmailHtml } from './services/emailService';
 import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation, downloadFileFromSharePoint, listAllXmlFilesFromFolder, buildRenamedXmlFileName } from './services/sharepointService';
-import { SharePointListsService } from './services/sharepointLists';
+import { dbService } from './services/dbService';
 
 import { useNotifications } from './hooks/useNotifications';
 import { useXMLValidator } from './hooks/useXMLValidator';
@@ -133,17 +133,14 @@ export default function App() {
   const [productPage, setProductPage] = useState(1);
   const itemsPerPage = 10;
 
-  // Check SharePoint Context on Mount
+  // Check Backend Connection on Mount
   React.useEffect(() => {
-    const available = SharePointListsService.isContextAvailable();
-    setIsSpAvailable(available);
-    if (available) {
-      checkSpInitialization();
-      fetchSpStats();
-      // Refresh stats every 5 minutes
-      const interval = setInterval(fetchSpStats, 5 * 60 * 1000);
-      return () => clearInterval(interval);
-    }
+    setIsSpAvailable(true); // Assuming backend is available if we are running
+    checkSpInitialization();
+    fetchSpStats();
+    // Refresh stats every 5 minutes
+    const interval = setInterval(fetchSpStats, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [checkSpInitialization, fetchSpStats, setIsSpAvailable]);
 
   const handleSharePointImport = async (filesOrEvent?: any[] | React.MouseEvent) => {
@@ -155,7 +152,7 @@ export default function App() {
       // Se for um evento ou chamado sem argumentos, busca os arquivos pendentes no SharePoint
       setIsFetchingSharePoint(true);
       try {
-        const fetchedFiles = await listXmlFilesFromFolder('SiteAssets/XMLs');
+        const fetchedFiles = await listXmlFilesFromFolder();
         if (fetchedFiles.length === 0) {
           showNotification('success', 'Nenhum arquivo XML pendente no SharePoint.');
           setIsFetchingSharePoint(false);
@@ -192,7 +189,7 @@ export default function App() {
           if (file.file instanceof File) {
             xmlFile = file.file;
           } else {
-            const blob = await SharePointListsService.downloadFile(file.serverRelativeUrl);
+            const blob = await downloadFileFromSharePoint(file.serverRelativeUrl, file.name);
             xmlFile = new File([blob], file.name, { type: 'text/xml' });
           }
           
@@ -205,7 +202,7 @@ export default function App() {
           const renamedFile = new File([await xmlFile.arrayBuffer()], newName, { type: 'text/xml' });
           
           // Move/Rename in SharePoint
-          const newUrl = await renameXmlFileAsValidated(serverRelativeUrl);
+          const newUrl = await renameXmlFileAsValidated(serverRelativeUrl, fileName);
           
           spUrlMap[newName] = newUrl;
           importedFiles.push(renamedFile);
@@ -258,7 +255,7 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const addRecipient = (e: React.FormEvent) => {
+  const addRecipient = async (e: React.FormEvent) => {
     e.preventDefault();
     const email = newEmail.trim();
     if (!email || !email.includes('@')) {
@@ -269,28 +266,29 @@ export default function App() {
       setNotification({ type: 'error', message: 'E-mail já cadastrado.' });
       return;
     }
-    setRecipients([...recipients, email]);
-    if (isSpInitialized) {
-      SharePointListsService.createItem('DHL_Recipients', { Title: email });
+    try {
+      await dbService.addRecipient(email);
+      setRecipients([...recipients, email]);
+      setNewEmail('');
+      setNotification({ type: 'success', message: 'E-mail adicionado com sucesso!' });
+    } catch (error) {
+      console.error('Erro ao adicionar destinatário:', error);
+      setNotification({ type: 'error', message: 'Erro ao salvar no banco de dados.' });
     }
-    setNewEmail('');
-    setNotification({ type: 'success', message: 'E-mail adicionado com sucesso!' });
     setTimeout(() => setNotification(null), 3000);
   };
 
   const removeRecipient = async (index: number) => {
     const emailToRemove = recipients[index];
-    setRecipients(recipients.filter((_, i) => i !== index));
-    if (isSpInitialized) {
-      try {
-        const items = await SharePointListsService.getItemsByFilter('DHL_Recipients', `Title eq '${emailToRemove}'`, { select: ['Id'] });
-        if (items.length > 0) {
-          await SharePointListsService.deleteItem('DHL_Recipients', items[0].Id);
-        }
-      } catch (error) {
-        console.error('Erro ao remover do SharePoint:', error);
-      }
+    try {
+      await dbService.deleteRecipient(emailToRemove);
+      setRecipients(recipients.filter((_, i) => i !== index));
+      setNotification({ type: 'success', message: 'E-mail removido com sucesso!' });
+    } catch (error) {
+      console.error('Erro ao remover destinatário:', error);
+      setNotification({ type: 'error', message: 'Erro ao remover do banco de dados.' });
     }
+    setTimeout(() => setNotification(null), 3000);
   };
 
   const startEdit = (index: number, value: string) => {
@@ -305,25 +303,21 @@ export default function App() {
       setNotification({ type: 'error', message: 'E-mail inválido.' });
       return;
     }
-    const updated = [...recipients];
-    updated[editingEmail.index] = email;
-    setRecipients(updated);
-
-    if (isSpInitialized) {
-      try {
-        const items = await SharePointListsService.getItemsByFilter('DHL_Recipients', `Title eq '${oldEmail}'`, { select: ['Id'] });
-        if (items.length > 0) {
-          await SharePointListsService.updateItem('DHL_Recipients', items[0].Id, { Title: email });
-        }
-      } catch (error) {
-        console.error('Erro ao atualizar no SharePoint:', error);
-      }
+    try {
+      await dbService.updateRecipient(oldEmail, email);
+      const updated = [...recipients];
+      updated[editingEmail.index] = email;
+      setRecipients(updated);
+      setNotification({ type: 'success', message: 'E-mail atualizado com sucesso!' });
+    } catch (error) {
+      console.error('Erro ao atualizar destinatário:', error);
+      setNotification({ type: 'error', message: 'Erro ao atualizar no banco de dados.' });
     }
-
     setEditingEmail(null);
+    setTimeout(() => setNotification(null), 3000);
   };
 
-  const addTag = (e: React.FormEvent) => {
+  const addTag = async (e: React.FormEvent) => {
     e.preventDefault();
     const name = newTagName.trim();
     const tag = newTagRef.trim();
@@ -335,31 +329,32 @@ export default function App() {
       setNotification({ type: 'error', message: 'Esta referência já existe.' });
       return;
     }
-    setMandatoryTags([...mandatoryTags, { name, tag }]);
-    if (isSpInitialized) {
-      SharePointListsService.createItem('DHL_MandatoryTags', { Title: name, TagRef: tag });
+    try {
+      await dbService.addTag(name, tag);
+      setMandatoryTags([...mandatoryTags, { name, tag }]);
+      setNewTagName('');
+      setNewTagRef('');
+      setNotification({ type: 'success', message: 'Campo obrigatório adicionado!' });
+    } catch (error) {
+      console.error('Erro ao adicionar tag:', error);
+      setNotification({ type: 'error', message: 'Erro ao salvar no banco de dados.' });
     }
-    setNewTagName('');
-    setNewTagRef('');
-    setNotification({ type: 'success', message: 'Campo obrigatório adicionado!' });
     setTimeout(() => setNotification(null), 3000);
   };
 
   const removeTag = async (tagRef: string) => {
-    setMandatoryTags(mandatoryTags.filter(t => t.tag !== tagRef));
-    if (isSpInitialized) {
-      try {
-        const items = await SharePointListsService.getItemsByFilter('DHL_MandatoryTags', `TagRef eq '${tagRef}'`, { select: ['Id'] });
-        if (items.length > 0) {
-          await SharePointListsService.deleteItem('DHL_MandatoryTags', items[0].Id);
-        }
-      } catch (error) {
-        console.error('Erro ao remover tag do SharePoint:', error);
-      }
+    try {
+      await dbService.deleteTag(tagRef);
+      setMandatoryTags(mandatoryTags.filter(t => t.tag !== tagRef));
+      setNotification({ type: 'success', message: 'Campo removido com sucesso!' });
+    } catch (error) {
+      console.error('Erro ao remover tag:', error);
+      setNotification({ type: 'error', message: 'Erro ao remover do banco de dados.' });
     }
+    setTimeout(() => setNotification(null), 3000);
   };
 
-  const addPattern = (e: React.FormEvent) => {
+  const addPattern = async (e: React.FormEvent) => {
     e.preventDefault();
     const pattern = newPattern.trim();
     if (!pattern) return;
@@ -373,28 +368,31 @@ export default function App() {
       setNotification({ type: 'error', message: 'Padrão já existe.' });
       return;
     }
-    setOsForbiddenPatterns([...osForbiddenPatterns, pattern]);
-    if (isSpInitialized) {
-      SharePointListsService.createItem('DHL_OSPatterns', { Title: pattern });
+    try {
+      await dbService.addOSPattern(pattern);
+      setOsForbiddenPatterns([...osForbiddenPatterns, pattern]);
+      setNewPattern('');
+      setNotification({ type: 'success', message: 'Padrão adicionado com sucesso!' });
+    } catch (error) {
+      console.error('Erro ao adicionar padrão:', error);
+      setNotification({ type: 'error', message: 'Erro ao salvar no banco de dados.' });
     }
-    setNewPattern('');
+    setTimeout(() => setNotification(null), 3000);
   };
 
   const removePattern = async (pattern: string) => {
-    setOsForbiddenPatterns(osForbiddenPatterns.filter(p => p !== pattern));
-    if (isSpInitialized) {
-      try {
-        const items = await SharePointListsService.getItemsByFilter('DHL_OSPatterns', `Title eq '${pattern}'`, { select: ['Id'] });
-        if (items.length > 0) {
-          await SharePointListsService.deleteItem('DHL_OSPatterns', items[0].Id);
-        }
-      } catch (error) {
-        console.error('Erro ao remover padrão do SharePoint:', error);
-      }
+    try {
+      await dbService.deleteOSPattern(pattern);
+      setOsForbiddenPatterns(osForbiddenPatterns.filter(p => p !== pattern));
+      setNotification({ type: 'success', message: 'Padrão removido com sucesso!' });
+    } catch (error) {
+      console.error('Erro ao remover padrão:', error);
+      setNotification({ type: 'error', message: 'Erro ao remover do banco de dados.' });
     }
+    setTimeout(() => setNotification(null), 3000);
   };
 
-  const addProduct = (e: React.FormEvent) => {
+  const addProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     const product = newProduct.trim();
     if (!product) return;
@@ -402,25 +400,32 @@ export default function App() {
       setNotification({ type: 'error', message: 'Produto já cadastrado.' });
       return;
     }
-    setRegisteredProducts([...registeredProducts, product]);
-    if (isSpInitialized) {
-      SharePointListsService.createItem('DHL_RegisteredProducts', { Title: product });
+    try {
+      if (isSpInitialized) {
+        await dbService.addRegisteredProduct(product);
+      }
+      setRegisteredProducts([...registeredProducts, product]);
+      setNewProduct('');
+      setNotification({ type: 'success', message: 'Produto adicionado com sucesso.' });
+    } catch (error) {
+      console.error('Erro ao adicionar produto:', error);
+      setNotification({ type: 'error', message: 'Erro ao salvar no banco de dados.' });
     }
-    setNewProduct('');
+    setTimeout(() => setNotification(null), 3000);
   };
 
   const removeProduct = async (product: string) => {
-    setRegisteredProducts(registeredProducts.filter(p => p !== product));
-    if (isSpInitialized) {
-      try {
-        const items = await SharePointListsService.getItemsByFilter('DHL_RegisteredProducts', `Title eq '${product}'`, { select: ['Id'] });
-        if (items.length > 0) {
-          await SharePointListsService.deleteItem('DHL_RegisteredProducts', items[0].Id);
-        }
-      } catch (error) {
-        console.error('Erro ao remover produto do SharePoint:', error);
+    try {
+      if (isSpInitialized) {
+        await dbService.deleteRegisteredProduct(product);
       }
+      setRegisteredProducts(registeredProducts.filter(p => p !== product));
+      setNotification({ type: 'success', message: 'Produto removido com sucesso.' });
+    } catch (error) {
+      console.error('Erro ao remover produto:', error);
+      setNotification({ type: 'error', message: 'Erro ao remover do banco de dados.' });
     }
+    setTimeout(() => setNotification(null), 3000);
   };
 
 
@@ -552,49 +557,42 @@ export default function App() {
         }
       });
 
-      // Log to Full History if SharePoint context is available
-      if (SharePointListsService.isContextAvailable()) {
-        const userInfo = SharePointListsService.getUserInfo();
-        
-        // Use Promise.all to ensure all items are created before refreshing the list
-        Promise.all(newResults.map(async (res) => {
-          try {
-            // Log to Full History
-            await SharePointListsService.createItem('DHL_FullHistory', {
+      // Log to Full History via Backend
+      Promise.all(newResults.map(async (res) => {
+        try {
+          // Log to Full History
+          await dbService.addHistory({
+            Title: res.fileName,
+            Status: res.isValid ? 'Válido' : 'Inválido',
+            ServerRelativeUrl: res.sharepointUrl || '',
+            nNF: res.nNF || '',
+            CNPJ: res.cnpj || '',
+            OS: res.osField || '',
+            NCM: res.ncm || '',
+            xProd: res.xProd || '',
+            UserEmail: 'Usuário Local', // In a real app, this would be the logged in user
+            Source: res.sharepointUrl ? 'SharePoint' : 'Local',
+            ValidationDate: new Date().toISOString()
+          });
+
+          // If it's a valid file from SharePoint, also log to Validation History for revalidation/reversion
+          if (res.isValid && res.sharepointUrl) {
+            await dbService.addValidationHistory({
               Title: res.fileName,
-              Status: res.isValid ? 'Válido' : 'Inválido',
-              FileRelativeUrl: res.sharepointUrl || '',
+              ServerRelativeUrl: res.sharepointUrl,
               nNF: res.nNF || '',
               CNPJ: res.cnpj || '',
               OS: res.osField || '',
               NCM: res.ncm || '',
               xProd: res.xProd || '',
-              UserEmail: userInfo.email || 'Usuário Local',
-              Source: res.sharepointUrl ? 'SharePoint' : 'Local',
+              Status: 'Válido',
               ValidationDate: new Date().toISOString()
             });
-
-            // If it's a valid file from SharePoint, also log to Validation History for revalidation/reversion
-            if (res.isValid && res.sharepointUrl) {
-              await SharePointListsService.createItem('DHL_ValidationHistory', {
-                Title: res.fileName,
-                FileRelativeUrl: res.sharepointUrl,
-                nNF: res.nNF || '',
-                CNPJ: res.cnpj || '',
-                OS: res.osField || '',
-                NCM: res.ncm || '',
-                xProd: res.xProd || '',
-                Status: 'Válido',
-                ValidationDate: new Date().toISOString()
-              });
-            }
-          } catch (err) {
-            console.error('Erro ao logar no histórico:', err);
           }
-        })).then(() => {
-          // No automatic refresh as per user request
-        });
-      }
+        } catch (err) {
+          console.error('Erro ao logar no histórico:', err);
+        }
+      }));
     }
 
     return newResults;
@@ -632,13 +630,13 @@ export default function App() {
   const validateSpFileManually = async (spFile: { name: string; serverRelativeUrl: string }) => {
     try {
       showNotification('success', `Importando ${spFile.name}...`);
-      const blob = await SharePointListsService.downloadFile(spFile.serverRelativeUrl);
+      const blob = await downloadFileFromSharePoint(spFile.serverRelativeUrl, spFile.name);
       const file = new File([blob], spFile.name, { type: 'text/xml' });
       
       // Rename the file in SharePoint so it doesn't appear in the next import
       const newName = buildRenamedXmlFileName(spFile.name);
       const renamedFile = new File([await file.arrayBuffer()], newName, { type: 'text/xml' });
-      const newUrl = await renameXmlFileAsValidated(spFile.serverRelativeUrl);
+      const newUrl = await renameXmlFileAsValidated(spFile.serverRelativeUrl, spFile.name);
       
       const spUrlMap = { [newName]: newUrl };
       await handleFiles([renamedFile], spUrlMap);
@@ -881,43 +879,31 @@ export default function App() {
                     </button>
                   </div>
 
-                  {/* SharePoint Integration Banner */}
-                  <div className={`p-4 rounded-xl border flex items-center justify-between gap-4 ${isSpInitialized ? 'bg-green-50 border-green-100' : isSpAvailable ? 'bg-blue-50 border-blue-100' : 'bg-gray-50 border-gray-100'}`}>
+                  {/* Backend Integration Banner */}
+                  <div className={`p-4 rounded-xl border flex items-center justify-between gap-4 ${isSpInitialized ? 'bg-green-50 border-green-100' : 'bg-blue-50 border-blue-100'}`}>
                     <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-lg ${isSpInitialized ? 'bg-green-100 text-green-600' : isSpAvailable ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-500'}`}>
+                      <div className={`p-2 rounded-lg ${isSpInitialized ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}`}>
                         {isSpInitialized ? <CheckCircle2 size={20} /> : <ShieldAlert size={20} />}
                       </div>
                       <div>
-                        <h4 className={`text-sm font-black uppercase tracking-widest ${isSpInitialized ? 'text-green-700' : isSpAvailable ? 'text-blue-700' : 'text-gray-700'}`}>
-                          Integração SharePoint
+                        <h4 className={`text-sm font-black uppercase tracking-widest ${isSpInitialized ? 'text-green-700' : 'text-blue-700'}`}>
+                          Integração Backend & Banco de Dados
                         </h4>
                         <p className="text-xs text-gray-500">
                           {isSpInitialized 
-                            ? 'As configurações estão sendo sincronizadas com as listas do SharePoint.' 
-                            : isSpAvailable 
-                              ? 'O contexto do SharePoint foi detectado. Clique ao lado para inicializar as listas de persistência.'
-                              : 'Contexto do SharePoint não detectado. As configurações serão salvas apenas localmente.'}
+                            ? 'As configurações estão sendo sincronizadas com o banco de dados Oracle.' 
+                            : 'O sistema está pronto para conectar ao backend. Clique ao lado para inicializar as tabelas.'}
                         </p>
                       </div>
                     </div>
                     {!isSpInitialized && (
                       <button 
-                        onClick={isSpAvailable ? initializeSharePoint : () => {
-                          const available = SharePointListsService.isContextAvailable();
-                          setIsSpAvailable(available);
-                          if (available) {
-                            checkSpInitialization();
-                            setNotification({ type: 'success', message: 'Contexto detectado!' });
-                          } else {
-                            setNotification({ type: 'error', message: 'Contexto ainda não encontrado.' });
-                          }
-                          setTimeout(() => setNotification(null), 3000);
-                        }}
+                        onClick={initializeSharePoint}
                         disabled={isInitializingSp}
                         className="bg-dhl-dark text-white px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest hover:bg-black transition-all flex items-center gap-2 disabled:opacity-50"
                       >
                         {isInitializingSp ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                        {isInitializingSp ? 'Inicializando...' : isSpAvailable ? 'Validar Contexto e Criar Listas' : 'Tentar Validar Contexto'}
+                        {isInitializingSp ? 'Inicializando...' : 'Inicializar Banco de Dados'}
                       </button>
                     )}
                     {isSpInitialized && (

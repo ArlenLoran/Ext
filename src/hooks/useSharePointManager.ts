@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { listXmlFilesFromFolder, renameXmlFileAsValidated, revertXmlFileValidation, downloadFileFromSharePoint, listAllXmlFilesFromFolder } from '../services/sharepointService';
-import { SharePointListsService } from '../services/sharepointLists';
+import { dbService } from '../services/dbService';
 import { SpFile, SpStats, MandatoryTag } from '../types';
 
 export function useSharePointManager(
@@ -14,8 +14,8 @@ export function useSharePointManager(
   importLimit: number,
   setImportLimit: (l: number) => void
 ) {
-  const [isSpAvailable, setIsSpAvailable] = useState(false);
-  const [isSpInitialized, setIsSpInitialized] = useState(false);
+  const [isSpAvailable, setIsSpAvailable] = useState(true);
+  const [isSpInitialized, setIsSpInitialized] = useState(true);
   const [isInitializingSp, setIsInitializingSp] = useState(false);
   const [isFetchingSharePoint, setIsFetchingSharePoint] = useState(false);
 
@@ -77,10 +77,9 @@ export function useSharePointManager(
   }, [spFilesList, spManagerSearch, spManagerStartDate, spManagerEndDate]);
 
   const fetchSpStats = useCallback(async () => {
-    if (!SharePointListsService.isContextAvailable()) return;
     setIsFetchingSpStats(true);
     try {
-      const allFiles = await listAllXmlFilesFromFolder('SiteAssets/XMLs');
+      const allFiles = await listAllXmlFilesFromFolder();
       
       const analyzed = allFiles.filter(f => f.isValidated).length;
       const pending = allFiles.filter(f => !f.isValidated).length;
@@ -95,17 +94,14 @@ export function useSharePointManager(
       }));
 
       try {
-        const history = await SharePointListsService.getItems('DHL_FullHistory', {
-          select: ['Title', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd'],
-          top: 5000
-        });
+        const history = await dbService.getHistory();
 
         enrichedFiles = enrichedFiles.map(file => {
           const originalName = file.name;
           const validatedName = file.isValidated ? originalName : `Validado_${originalName}`;
           const unvalidatedName = file.isValidated ? originalName.replace(/^Validado_/i, '') : originalName;
           
-          const record = history.find(h => 
+          const record = history.find((h: any) => 
             h.Title === originalName || h.Title === validatedName || h.Title === unvalidatedName
           );
           
@@ -135,50 +131,36 @@ export function useSharePointManager(
 
   const loadDataFromSharePoint = useCallback(async () => {
     try {
-      const spRecipients = await SharePointListsService.getItems('DHL_Recipients', { select: ['Title'] });
+      const spRecipients = await dbService.getRecipients();
       if (spRecipients.length > 0) {
-        setRecipients(spRecipients.map(item => item.Title));
+        setRecipients(spRecipients.map((item: any) => item.Title));
       }
 
-      const spTags = await SharePointListsService.getItems('DHL_MandatoryTags', { select: ['Title', 'TagRef'] });
+      const spTags = await dbService.getTags();
       if (spTags.length > 0) {
-        setMandatoryTags(spTags.map(item => ({ name: item.Title, tag: item.TagRef })));
+        setMandatoryTags(spTags.map((item: any) => ({ name: item.Title, tag: item.TagRef })));
       }
 
-      const spPatterns = await SharePointListsService.getItems('DHL_OSPatterns', { select: ['Title'] });
+      const spPatterns = await dbService.getOSPatterns();
       if (spPatterns.length > 0) {
-        setOsForbiddenPatterns(spPatterns.map(item => item.Title));
+        setOsForbiddenPatterns(spPatterns.map((item: any) => item.Title));
       }
 
-      const spConfig = await SharePointListsService.getItems('DHL_Config', { select: ['Title', 'Value'] });
-      const limitConfig = spConfig.find(c => c.Title === 'ImportLimit');
+      const spConfig = await dbService.getConfig();
+      const limitConfig = spConfig.find((c: any) => c.Title === 'ImportLimit');
       if (limitConfig) {
         setImportLimit(parseInt(limitConfig.Value, 10));
       }
     } catch (error) {
-      console.error('Erro ao carregar dados do SharePoint:', error);
+      console.error('Erro ao carregar dados do banco de dados:', error);
     }
   }, [setRecipients, setMandatoryTags, setOsForbiddenPatterns, setImportLimit]);
 
   const checkSpInitialization = useCallback(async () => {
-    try {
-      const recExists = await SharePointListsService.listExists('DHL_Recipients');
-      const tagExists = await SharePointListsService.listExists('DHL_MandatoryTags');
-      const patExists = await SharePointListsService.listExists('DHL_OSPatterns');
-      const revalExists = await SharePointListsService.listExists('DHL_ValidationHistory');
-      const histExists = await SharePointListsService.listExists('DHL_FullHistory');
-      const configExists = await SharePointListsService.listExists('DHL_Config');
-      
-      if (recExists && tagExists && patExists && revalExists && histExists && configExists) {
-        setIsSpInitialized(true);
-        loadDataFromSharePoint();
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error('Erro ao verificar inicialização do SharePoint:', error);
-      return false;
-    }
+    // With backend, we assume it's always initialized or handled by backend
+    setIsSpInitialized(true);
+    loadDataFromSharePoint();
+    return true;
   }, [loadDataFromSharePoint]);
 
   const validateDateRange = useCallback((start: string, end: string) => {
@@ -195,8 +177,6 @@ export function useSharePointManager(
   }, []);
 
   const loadRevalidationFromSharePoint = useCallback(async () => {
-    if (!SharePointListsService.isContextAvailable()) return;
-    
     const validation = validateDateRange(revalidationStartDate, revalidationEndDate);
     if (!validation.valid) {
       showNotification('error', validation.message);
@@ -205,28 +185,25 @@ export function useSharePointManager(
 
     setIsFetchingRevalidation(true);
     try {
-      const filter = `Created ge datetime'${revalidationStartDate}T00:00:00Z' and Created le datetime'${revalidationEndDate}T23:59:59Z'`;
-      const items = await SharePointListsService.getItems('DHL_ValidationHistory', {
-        select: ['Id', 'Title', 'ServerRelativeUrl', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd', 'Status', 'ValidationDate'],
-        orderBy: 'Id desc',
-        top: 2000,
-        filter
+      const items = await dbService.getValidationHistory();
+      // Filter by date range manually if backend doesn't support it yet
+      const filtered = items.filter((item: any) => {
+        const date = new Date(item.ValidationDate);
+        return date >= new Date(revalidationStartDate) && date <= new Date(revalidationEndDate + 'T23:59:59Z');
       });
-      setRevalidationItems(items);
-      if (items.length === 0) {
+      setRevalidationItems(filtered);
+      if (filtered.length === 0) {
         showNotification('success', 'Nenhum registro encontrado para este período.');
       }
     } catch (error) {
       console.error('Erro ao carregar revalidação:', error);
-      showNotification('error', 'Erro ao carregar dados do SharePoint.');
+      showNotification('error', 'Erro ao carregar dados do banco de dados.');
     } finally {
       setIsFetchingRevalidation(false);
     }
   }, [revalidationStartDate, revalidationEndDate, validateDateRange, showNotification]);
 
   const loadFullHistoryFromSharePoint = useCallback(async () => {
-    if (!SharePointListsService.isContextAvailable()) return;
-
     const validation = validateDateRange(fullHistoryStartDate, fullHistoryEndDate);
     if (!validation.valid) {
       showNotification('error', validation.message);
@@ -235,20 +212,18 @@ export function useSharePointManager(
 
     setIsFetchingFullHistory(true);
     try {
-      const filter = `Created ge datetime'${fullHistoryStartDate}T00:00:00Z' and Created le datetime'${fullHistoryEndDate}T23:59:59Z'`;
-      const items = await SharePointListsService.getItems('DHL_FullHistory', {
-        select: ['Id', 'Title', 'ServerRelativeUrl', 'Status', 'nNF', 'CNPJ', 'OS', 'NCM', 'xProd', 'UserEmail', 'Source', 'ValidationDate'],
-        orderBy: 'Id desc',
-        top: 5000,
-        filter
+      const items = await dbService.getHistory();
+      const filtered = items.filter((item: any) => {
+        const date = new Date(item.ValidationDate);
+        return date >= new Date(fullHistoryStartDate) && date <= new Date(fullHistoryEndDate + 'T23:59:59Z');
       });
-      setFullHistory(items);
-      if (items.length === 0) {
+      setFullHistory(filtered);
+      if (filtered.length === 0) {
         showNotification('success', 'Nenhum registro encontrado para este período.');
       }
     } catch (error) {
       console.error('Erro ao carregar histórico:', error);
-      showNotification('error', 'Erro ao carregar dados do SharePoint.');
+      showNotification('error', 'Erro ao carregar dados do banco de dados.');
     } finally {
       setIsFetchingFullHistory(false);
     }
@@ -273,7 +248,7 @@ export function useSharePointManager(
 
   const handleRevertSpFile = useCallback(async (spFile: { name: string; serverRelativeUrl: string }) => {
     try {
-      await revertXmlFileValidation(spFile.serverRelativeUrl);
+      await revertXmlFileValidation(spFile.serverRelativeUrl, spFile.name);
       showNotification('success', 'Validação revertida com sucesso!');
       fetchSpStats();
     } catch (error) {
@@ -283,12 +258,11 @@ export function useSharePointManager(
   }, [showNotification, fetchSpStats]);
 
   const handleRevertValidation = useCallback(async (historyItem: any) => {
-    if (!SharePointListsService.isContextAvailable()) return;
     setIsFetchingRevalidation(true);
     try {
-      await revertXmlFileValidation(historyItem.ServerRelativeUrl);
+      await revertXmlFileValidation(historyItem.ServerRelativeUrl, historyItem.Title);
       try {
-        await SharePointListsService.deleteItem('DHL_ValidationHistory', historyItem.Id);
+        await dbService.deleteValidationHistory(historyItem.ID);
       } catch (delError) {
         console.warn('Erro ao deletar item do histórico, mas o arquivo foi restaurado:', delError);
       }
@@ -304,103 +278,51 @@ export function useSharePointManager(
   const syncAllToSharePoint = useCallback(async () => {
     try {
       for (const email of recipients) {
-        await SharePointListsService.upsertItem('DHL_Recipients', `Title eq '${email}'`, { Title: email });
+        await dbService.addRecipient(email);
       }
       for (const tag of mandatoryTags) {
-        await SharePointListsService.upsertItem('DHL_MandatoryTags', `TagRef eq '${tag.tag}'`, { Title: tag.name, TagRef: tag.tag });
+        await dbService.addTag(tag.name, tag.tag);
       }
       for (const pattern of osForbiddenPatterns) {
-        await SharePointListsService.upsertItem('DHL_OSPatterns', `Title eq '${pattern}'`, { Title: pattern });
+        await dbService.addOSPattern(pattern);
       }
-      await SharePointListsService.upsertItem('DHL_Config', "Title eq 'ImportLimit'", { Title: 'ImportLimit', Value: importLimit.toString() });
+      await dbService.saveConfig('ImportLimit', importLimit.toString());
     } catch (error) {
-      console.error('Erro ao sincronizar dados com SharePoint:', error);
+      console.error('Erro ao sincronizar dados com banco de dados:', error);
     }
   }, [recipients, mandatoryTags, osForbiddenPatterns, importLimit]);
 
   const initializeSharePoint = useCallback(async () => {
-    if (!SharePointListsService.isContextAvailable()) return;
     setIsInitializingSp(true);
     try {
-      // Ensure Recipients List
-      await SharePointListsService.ensureList('DHL_Recipients', 'Lista de destinatários para alertas de divergência', [
-        { title: 'Title', type: 'Text', required: true }
-      ]);
-
-      // Ensure Mandatory Tags List
-      await SharePointListsService.ensureList('DHL_MandatoryTags', 'Tags obrigatórias para validação XML', [
-        { title: 'Title', type: 'Text', required: true },
-        { title: 'TagRef', type: 'Text', required: true }
-      ]);
-
-      // Ensure OS Forbidden Patterns List
-      await SharePointListsService.ensureList('DHL_OSPatterns', 'Padrões proibidos no campo OS', [
-        { title: 'Title', type: 'Text', required: true }
-      ]);
-
-      // Ensure Validation History List
-      await SharePointListsService.ensureList('DHL_ValidationHistory', 'Histórico de validações para revalidação', [
-        { title: 'Title', type: 'Text', required: true },
-        { title: 'ServerRelativeUrl', type: 'Text', required: true },
-        { title: 'nNF', type: 'Text' },
-        { title: 'CNPJ', type: 'Text' },
-        { title: 'OS', type: 'Text' },
-        { title: 'NCM', type: 'Text' },
-        { title: 'xProd', type: 'Text' }
-      ]);
-
-      // Ensure Full History List
-      await SharePointListsService.ensureList('DHL_FullHistory', 'Histórico completo de todas as validações', [
-        { title: 'Title', type: 'Text', required: true },
-        { title: 'Status', type: 'Text', required: true },
-        { title: 'ServerRelativeUrl', type: 'Text' },
-        { title: 'nNF', type: 'Text' },
-        { title: 'CNPJ', type: 'Text' },
-        { title: 'OS', type: 'Text' },
-        { title: 'NCM', type: 'Text' },
-        { title: 'xProd', type: 'Text' },
-        { title: 'UserEmail', type: 'Text' },
-        { title: 'Source', type: 'Text' },
-        { title: 'ValidationDate', type: 'DateTime' }
-      ]);
-
-      // Ensure Config List
-      await SharePointListsService.ensureList('DHL_Config', 'Configurações gerais do sistema', [
-        { title: 'Title', type: 'Text', required: true },
-        { title: 'Value', type: 'Text', required: true }
-      ]);
-
+      await dbService.initializeDb();
       setIsSpInitialized(true);
-      showNotification('success', 'Listas do SharePoint inicializadas com sucesso!');
+      showNotification('success', 'Integração com banco de dados inicializada!');
       
       await syncAllToSharePoint();
       loadRevalidationFromSharePoint();
       loadFullHistoryFromSharePoint();
       
     } catch (error) {
-      console.error('Erro ao inicializar SharePoint:', error);
-      showNotification('error', 'Erro ao criar listas no SharePoint.');
+      console.error('Erro ao inicializar banco de dados:', error);
+      showNotification('error', 'Erro ao inicializar integração.');
     } finally {
       setIsInitializingSp(false);
     }
   }, [showNotification, syncAllToSharePoint, loadRevalidationFromSharePoint, loadFullHistoryFromSharePoint]);
 
   useEffect(() => {
-    const available = SharePointListsService.isContextAvailable();
-    setIsSpAvailable(available);
-    if (available) {
-      checkSpInitialization();
-      fetchSpStats();
-      const interval = setInterval(fetchSpStats, 5 * 60 * 1000);
-      return () => clearInterval(interval);
-    }
+    checkSpInitialization();
+    fetchSpStats();
+    const interval = setInterval(fetchSpStats, 5 * 60 * 1000);
+    return () => clearInterval(interval);
   }, [checkSpInitialization, fetchSpStats]);
 
   useEffect(() => {
-    if (showSpManager && isSpAvailable) {
+    if (showSpManager) {
       fetchSpStats();
     }
-  }, [showSpManager, isSpAvailable, fetchSpStats]);
+  }, [showSpManager, fetchSpStats]);
 
   return {
     isSpAvailable,
