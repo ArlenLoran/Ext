@@ -25,20 +25,21 @@ const PORT = 3000;
 app.use(cors());
 app.use(express.json());
 
-// Check if critical configuration is missing
-const isConfigMissing = !process.env.DEV_DB_STRING_CONNECTION || 
-                        !process.env.SHAREPOINT_API_BASE_URL || 
-                        !process.env.SHAREPOINT_DRIVE_ID || 
-                        !process.env.SHAREPOINT_PATH_XMLS_ID;
+// Validate required environment variables
+const requiredEnvVars = [
+  "DEV_DB_USER",
+  "DEV_DB_PASSWORD",
+  "DEV_DB_STRING_CONNECTION",
+  "SHAREPOINT_API_BASE_URL",
+  "SHAREPOINT_DRIVE_ID",
+  "SHAREPOINT_PATH_XMLS_ID",
+  "SHAREPOINT_BEARER_TOKEN"
+];
 
-if (isConfigMissing) {
-  console.warn("WARNING: Some environment variables are missing. The system will run in MOCK MODE for missing services.");
-  console.warn("Missing variables:", [
-    !process.env.DEV_DB_STRING_CONNECTION && "DEV_DB_STRING_CONNECTION",
-    !process.env.SHAREPOINT_API_BASE_URL && "SHAREPOINT_API_BASE_URL",
-    !process.env.SHAREPOINT_DRIVE_ID && "SHAREPOINT_DRIVE_ID",
-    !process.env.SHAREPOINT_PATH_XMLS_ID && "SHAREPOINT_PATH_XMLS_ID"
-  ].filter(Boolean).join(", "));
+const missingVars = requiredEnvVars.filter(v => !process.env[v]);
+if (missingVars.length > 0) {
+  console.error("CRITICAL: Missing environment variables:", missingVars.join(", "));
+  console.error("Please set these in the AI Studio Secrets panel.");
 }
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -47,9 +48,6 @@ const upload = multer({ storage: multer.memoryStorage() });
 let pool: oracledb.Pool | null = null;
 
 async function getPool() {
-  if (!process.env.DEV_DB_STRING_CONNECTION) {
-    return null; // Signal mock mode for DB
-  }
   if (!pool) {
     try {
       const dbConfig: oracledb.PoolAttributes = {
@@ -62,11 +60,15 @@ async function getPool() {
         oracledb.initOracleClient({ libDir: process.env.DEV_ORACLE_LIB_DIR });
       }
 
+      if (!dbConfig.connectString) {
+        throw new Error("DEV_DB_STRING_CONNECTION environment variable is missing or empty.");
+      }
+
       pool = await oracledb.createPool(dbConfig);
       console.log("Oracle DB pool created successfully.");
     } catch (err: any) {
       console.error("Error creating database pool:", err.message);
-      return null; // Fallback to mock mode
+      throw new Error(`Database connection failed: ${err.message}`);
     }
   }
   return pool;
@@ -93,11 +95,7 @@ const spApi = axios.create({
 app.get("/api/sharepoint/list", async (req, res) => {
   try {
     if (!SP_BASE_URL || !SP_DRIVE_ID || !SP_PATH_XMLS_ID) {
-      console.log("Using MOCK SharePoint data (config missing)");
-      return res.json([
-        { id: "mock-1", name: "Mock_XML_1.xml", serverRelativeUrl: "mock-1", timeCreated: new Date().toISOString() },
-        { id: "mock-2", name: "Mock_XML_2.xml", serverRelativeUrl: "mock-2", timeCreated: new Date().toISOString() }
-      ]);
+      throw new Error("SharePoint configuration is missing (Base URL, Drive ID, or Path ID)");
     }
     const url = `drives/listFileFolder/${SP_DRIVE_ID}/${SP_PATH_XMLS_ID}`;
     const response = await spApi.get(url);
@@ -115,10 +113,7 @@ app.get("/api/sharepoint/list", async (req, res) => {
     res.json(filtered);
   } catch (error: any) {
     console.error("Error listing SharePoint files:", error.message);
-    // Fallback to mock data on error
-    res.json([
-      { id: "mock-err", name: "Error_Mock.xml", serverRelativeUrl: "mock-err", timeCreated: new Date().toISOString() }
-    ]);
+    res.status(500).json({ error: error.message });
   }
 });
 
@@ -127,10 +122,7 @@ app.get("/api/sharepoint/download/:itemId", async (req, res) => {
   try {
     const { itemId } = req.params;
     if (!SP_BASE_URL || !SP_DRIVE_ID) {
-      console.log("Using MOCK SharePoint download");
-      res.setHeader("Content-Type", "text/xml");
-      res.setHeader("Content-Disposition", `attachment; filename="${itemId}.xml"`);
-      return res.send("<mock>This is mock XML content</mock>");
+      throw new Error("SharePoint configuration is missing (Base URL or Drive ID)");
     }
     const url = `drives/downloadFile/${SP_DRIVE_ID}/${itemId}`;
     const response = await spApi.get(url, { responseType: "arraybuffer" });
@@ -151,8 +143,7 @@ app.post("/api/sharepoint/upload", upload.single("file"), async (req: any, res) 
     if (!file) return res.status(400).json({ error: "No file uploaded" });
 
     if (!SP_BASE_URL || !SP_DRIVE_ID || !SP_PATH_XMLS_ID) {
-      console.log("Using MOCK SharePoint upload");
-      return res.json({ id: "mock-upload-id", name: file.originalname });
+      throw new Error("SharePoint configuration is missing (Base URL, Drive ID, or Path ID)");
     }
 
     const formData = new FormData();
@@ -174,8 +165,7 @@ app.delete("/api/sharepoint/delete/:itemId", async (req, res) => {
   try {
     const { itemId } = req.params;
     if (!SP_BASE_URL || !SP_DRIVE_ID) {
-      console.log("Using MOCK SharePoint delete");
-      return res.json({ success: true });
+      throw new Error("SharePoint configuration is missing (Base URL or Drive ID)");
     }
     const url = `DeleteFile?driveId=${SP_DRIVE_ID}&itemId=${itemId}`;
     const response = await spApi.delete(url);
@@ -191,8 +181,7 @@ app.post("/api/sharepoint/rename", async (req, res) => {
   try {
     const { itemId, newName } = req.body;
     if (!SP_BASE_URL || !SP_DRIVE_ID) {
-      console.log("Using MOCK SharePoint rename");
-      return res.json({ success: true, newName });
+      throw new Error("SharePoint configuration is missing (Base URL or Drive ID)");
     }
     const url = `RenameFile?driveId=${SP_DRIVE_ID}&itemId=${itemId}&newName=${encodeURIComponent(newName)}`;
     const response = await spApi.post(url);
@@ -209,12 +198,6 @@ app.get("/api/db/history", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB history");
-      return res.json([
-        { Title: "Mock History 1", Status: "Validado", nNF: "123", CNPJ: "12345678000199", ValidationDate: new Date().toISOString() }
-      ]);
-    }
     connection = await pool.getConnection();
     const result = await connection.execute(
       "SELECT * FROM DHL_FullHistory ORDER BY ValidationDate DESC FETCH FIRST 5000 ROWS ONLY",
@@ -233,10 +216,6 @@ app.post("/api/db/history", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB history save");
-      return res.json({ success: true });
-    }
     connection = await pool.getConnection();
     const { Title, Status, ServerRelativeUrl, nNF, CNPJ, OS, NCM, xProd, UserEmail, Source, ValidationDate } = req.body;
     
@@ -259,10 +238,6 @@ app.get("/api/db/recipients", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB recipients");
-      return res.json([{ Title: "Mock Recipient 1" }, { Title: "Mock Recipient 2" }]);
-    }
     connection = await pool.getConnection();
     const result = await connection.execute("SELECT * FROM DHL_Recipients", [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
     res.json(result.rows);
@@ -277,7 +252,6 @@ app.post("/api/db/recipients", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { Title } = req.body;
     await connection.execute("INSERT INTO DHL_Recipients (Title) VALUES (:Title)", { Title }, { autoCommit: true });
@@ -293,7 +267,6 @@ app.delete("/api/db/recipients/:title", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { title } = req.params;
     await connection.execute("DELETE FROM DHL_Recipients WHERE Title = :Title", { Title: title }, { autoCommit: true });
@@ -309,7 +282,6 @@ app.put("/api/db/recipients/:title", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const oldTitle = req.params.title;
     const { Title } = req.body;
@@ -327,10 +299,6 @@ app.get("/api/db/tags", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB tags");
-      return res.json([{ Title: "Mock Tag 1", TagRef: "MOCK_1" }]);
-    }
     connection = await pool.getConnection();
     const result = await connection.execute("SELECT * FROM DHL_MandatoryTags", [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
     res.json(result.rows);
@@ -345,7 +313,6 @@ app.post("/api/db/tags", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { Title, TagRef } = req.body;
     await connection.execute("INSERT INTO DHL_MandatoryTags (Title, TagRef) VALUES (:Title, :TagRef)", { Title, TagRef }, { autoCommit: true });
@@ -361,7 +328,6 @@ app.delete("/api/db/tags/:tagRef", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { tagRef } = req.params;
     await connection.execute("DELETE FROM DHL_MandatoryTags WHERE TagRef = :TagRef", { TagRef: tagRef }, { autoCommit: true });
@@ -377,7 +343,6 @@ app.put("/api/db/tags/:tagRef", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { tagRef } = req.params;
     const { Title } = req.body;
@@ -395,10 +360,6 @@ app.get("/api/db/os-patterns", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB OS patterns");
-      return res.json([{ Title: "Mock Pattern 1" }]);
-    }
     connection = await pool.getConnection();
     const result = await connection.execute("SELECT * FROM DHL_OSPatterns", [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
     res.json(result.rows);
@@ -413,7 +374,6 @@ app.post("/api/db/os-patterns", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { Title } = req.body;
     await connection.execute("INSERT INTO DHL_OSPatterns (Title) VALUES (:Title)", { Title }, { autoCommit: true });
@@ -429,7 +389,6 @@ app.delete("/api/db/os-patterns/:title", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { title } = req.params;
     await connection.execute("DELETE FROM DHL_OSPatterns WHERE Title = :Title", { Title: title }, { autoCommit: true });
@@ -446,10 +405,6 @@ app.get("/api/db/config", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB config");
-      return res.json([{ Title: "Mock Config", Value: "Mock Value" }]);
-    }
     connection = await pool.getConnection();
     const result = await connection.execute("SELECT * FROM DHL_Config", [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
     res.json(result.rows);
@@ -464,7 +419,6 @@ app.post("/api/db/config", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { Title, Value } = req.body;
     await connection.execute(
@@ -507,7 +461,6 @@ app.post("/api/db/validation-history", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { Title, ServerRelativeUrl, nNF, CNPJ, OS, NCM, xProd, Status, ValidationDate } = req.body;
     await connection.execute(
@@ -528,7 +481,6 @@ app.delete("/api/db/validation-history/:id", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { id } = req.params;
     await connection.execute("DELETE FROM DHL_ValidationHistory WHERE ID = :ID", { ID: id }, { autoCommit: true });
@@ -545,10 +497,6 @@ app.get("/api/db/registered-products", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB registered products");
-      return res.json(["Mock Product 1", "Mock Product 2"]);
-    }
     connection = await pool.getConnection();
     const result = await connection.execute(
       "SELECT PRODUCT_NAME FROM DHL_RegisteredProducts",
@@ -567,7 +515,6 @@ app.post("/api/db/registered-products", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { productName } = req.body;
     await connection.execute(
@@ -587,7 +534,6 @@ app.delete("/api/db/registered-products/:productName", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) return res.json({ success: true });
     connection = await pool.getConnection();
     const { productName } = req.params;
     await connection.execute(
@@ -608,10 +554,6 @@ app.post("/api/db/query/ntv", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB query NTV");
-      return res.json([{ PRTNUM: "MOCK-PRT-1", DESCR: "Mock Description" }]);
-    }
     connection = await pool.getConnection();
     const { product } = req.body;
     const result = await connection.execute(
@@ -631,10 +573,6 @@ app.post("/api/db/query/os", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB query OS");
-      return res.json([{ WAYBIL: "MOCK-OS-1", STATUS: "Mock Status" }]);
-    }
     connection = await pool.getConnection();
     const { osNumber } = req.body;
     const result = await connection.execute(
@@ -654,10 +592,6 @@ app.post("/api/db/query/ncm", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB query NCM");
-      return res.json([{ TYPCOD: "MOCK-NCM-1", DESCR: "Mock Description" }]);
-    }
     connection = await pool.getConnection();
     const { ncm } = req.body;
     const result = await connection.execute(
@@ -678,10 +612,6 @@ app.post("/api/db/initialize", async (req, res) => {
   let connection;
   try {
     const pool = await getPool();
-    if (!pool) {
-      console.log("Using MOCK DB initialize");
-      return res.json({ success: true });
-    }
     connection = await pool.getConnection();
     
     const tables = [
