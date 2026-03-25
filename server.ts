@@ -3,7 +3,7 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import cors from "cors";
 import dotenv from "dotenv";
-import oracledb from "oracledb";
+import oracledb from "oracledb/thin.js";
 import axios from "axios";
 import multer from "multer";
 import { fileURLToPath } from "url";
@@ -38,7 +38,7 @@ const requiredEnvVars = [
 
 console.log("--- Environment Variable Check ---");
 const allKeys = Object.keys(process.env);
-const relevantKeys = allKeys.filter(k => k.startsWith("DEV_") || k.startsWith("SHAREPOINT_") || k.startsWith("VITE_"));
+const relevantKeys = allKeys.filter(k => k.startsWith("DEV_") || k.startsWith("SHAREPOINT_") || k.startsWith("VITE_") || k.startsWith("ORACLE") || k.startsWith("LD_LIBRARY_PATH"));
 console.log("Relevant keys found in process.env:", relevantKeys);
 
 requiredEnvVars.forEach(v => {
@@ -75,16 +75,17 @@ async function getPool() {
         connectString: process.env.DEV_DB_STRING_CONNECTION,
       };
 
-      if (process.env.DEV_ORACLE_LIB_DIR) {
-        oracledb.initOracleClient({ libDir: process.env.DEV_ORACLE_LIB_DIR });
-      }
-
+      console.log(`Using oracledb version: ${oracledb.versionString}`);
+      console.log(`Is oracledb in Thin mode? ${oracledb.thin}`);
       if (!dbConfig.connectString) {
         throw new Error("DEV_DB_STRING_CONNECTION environment variable is missing or empty.");
       }
 
+      // Use Thin Mode by default (no initOracleClient call needed for oracledb 6+)
+      // Thin mode is recommended for Cloud environments as it doesn't require Oracle Client libraries.
+      console.log("Attempting to create Oracle DB pool in Thin Mode...");
       pool = await oracledb.createPool(dbConfig);
-      console.log("Oracle DB pool created successfully.");
+      console.log("Oracle DB pool created successfully (Thin Mode).");
     } catch (err: any) {
       console.error("Error creating database pool:", err.message);
       throw new Error(`Database connection failed: ${err.message}`);
