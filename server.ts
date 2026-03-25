@@ -1,3 +1,19 @@
+import os from "os";
+import fs from "fs";
+
+console.log(`Operating System: ${os.platform()} ${os.release()}`);
+console.log(`Current Working Directory: ${process.cwd()}`);
+
+const oraclePath = "C:\\oracle\\instantclient_21_7";
+try {
+  if (fs.existsSync(oraclePath)) {
+    console.log(`SUCCESS: Directory ${oraclePath} exists!`);
+  } else {
+    console.log(`FAILURE: Directory ${oraclePath} NOT found.`);
+  }
+} catch (e) {
+  console.log(`Error checking directory: ${e}`);
+}
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
