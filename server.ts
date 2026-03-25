@@ -36,6 +36,25 @@ const requiredEnvVars = [
   "SHAREPOINT_BEARER_TOKEN"
 ];
 
+console.log("--- Environment Variable Check ---");
+const allKeys = Object.keys(process.env);
+const relevantKeys = allKeys.filter(k => k.startsWith("DEV_") || k.startsWith("SHAREPOINT_") || k.startsWith("VITE_"));
+console.log("Relevant keys found in process.env:", relevantKeys);
+
+requiredEnvVars.forEach(v => {
+  const val = process.env[v];
+  console.log(`${v}: ${val ? (val.length > 5 ? val.substring(0, 5) + "..." : "present") : "MISSING"}`);
+  
+  // Also check for VITE_ prefix if missing
+  if (!val && !v.startsWith("VITE_")) {
+    const viteVal = process.env[`VITE_${v}`];
+    if (viteVal) {
+      console.log(`FOUND ALTERNATIVE: VITE_${v} is present!`);
+    }
+  }
+});
+console.log("----------------------------------");
+
 const missingVars = requiredEnvVars.filter(v => !process.env[v]);
 if (missingVars.length > 0) {
   console.error("CRITICAL: Missing environment variables:", missingVars.join(", "));
