@@ -35,7 +35,7 @@ export default function App() {
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const isDevMode = !window._spPageContextInfo;
 
-  const folderPath = 'SharedDocuments/DACE';
+  const folderPath = 'Shared Documents/DACE';
 
   const fetchFiles = async () => {
     setLoading(true);

@@ -126,12 +126,12 @@ export async function deleteFileFromSharePoint(serverRelativeUrl: string): Promi
   }
 }
 
-export async function listPdfFilesFromFolder(folderPath = 'SharedDocuments/DACE'): Promise<{ name: string; serverRelativeUrl: string; timeCreated: string; size: number }[]> {
+export async function listPdfFilesFromFolder(folderPath = 'Shared Documents/DACE'): Promise<{ name: string; serverRelativeUrl: string; timeCreated: string; size: number }[]> {
   if (isDev()) {
     return [
-      { name: 'DACE_NF_12345.pdf', serverRelativeUrl: '/sites/dev/SharedDocuments/DACE/DACE_NF_12345.pdf', timeCreated: new Date().toISOString(), size: 1024 * 450 },
-      { name: 'DACE_NF_67890.pdf', serverRelativeUrl: '/sites/dev/SharedDocuments/DACE/DACE_NF_67890.pdf', timeCreated: new Date(Date.now() - 86400000).toISOString(), size: 1024 * 1200 },
-      { name: 'DACE_NF_ABCDE.pdf', serverRelativeUrl: '/sites/dev/SharedDocuments/DACE/DACE_NF_ABCDE.pdf', timeCreated: new Date(Date.now() - 172800000).toISOString(), size: 1024 * 850 },
+      { name: 'DACE_NF_12345.pdf', serverRelativeUrl: '/sites/dev/Shared Documents/DACE/DACE_NF_12345.pdf', timeCreated: new Date().toISOString(), size: 1024 * 450 },
+      { name: 'DACE_NF_67890.pdf', serverRelativeUrl: '/sites/dev/Shared Documents/DACE/DACE_NF_67890.pdf', timeCreated: new Date(Date.now() - 86400000).toISOString(), size: 1024 * 1200 },
+      { name: 'DACE_NF_ABCDE.pdf', serverRelativeUrl: '/sites/dev/Shared Documents/DACE/DACE_NF_ABCDE.pdf', timeCreated: new Date(Date.now() - 172800000).toISOString(), size: 1024 * 850 },
     ];
   }
   const folderServerRelativeUrl = normalizeFolderServerRelativeUrl(folderPath);
