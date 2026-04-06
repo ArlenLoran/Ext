@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import JSZip from 'jszip';
 import { 
   FileText, 
   Download, 
@@ -15,7 +16,11 @@ import {
   ExternalLink,
   ChevronRight,
   Clock,
-  HardDrive
+  HardDrive,
+  ChevronLeft,
+  CheckSquare,
+  Square,
+  Files
 } from 'lucide-react';
 import { 
   listPdfFilesFromFolder, 
@@ -33,8 +38,12 @@ export default function App() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [isDownloadingZip, setIsDownloadingZip] = useState(false);
   const isDevMode = !window._spPageContextInfo;
 
+  const itemsPerPage = 15;
   const folderPath = 'Shared Documents/DACE';
 
   const fetchFiles = async () => {
@@ -54,6 +63,10 @@ export default function App() {
   useEffect(() => {
     fetchFiles();
   }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
 
   const showNotification = (type: 'success' | 'error', message: string) => {
     setNotification({ type, message });
@@ -88,6 +101,59 @@ export default function App() {
     }
   };
 
+  const handleZipDownload = async () => {
+    if (selectedFiles.size === 0) return;
+    
+    setIsDownloadingZip(true);
+    try {
+      const zip = new JSZip();
+      const selectedPdfFiles = files.filter(f => selectedFiles.has(f.serverRelativeUrl));
+      
+      const downloadPromises = selectedPdfFiles.map(async (file) => {
+        const blob = await downloadFileFromSharePoint(file.serverRelativeUrl, file.name);
+        zip.file(file.name, blob);
+      });
+
+      await Promise.all(downloadPromises);
+      
+      const content = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(content);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `DACE_Batch_${new Date().getTime()}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      showNotification('success', `${selectedFiles.size} arquivos baixados em um .zip`);
+      setSelectedFiles(new Set());
+    } catch (err) {
+      console.error('Erro ao gerar ZIP:', err);
+      showNotification('error', 'Falha ao gerar o arquivo .zip.');
+    } finally {
+      setIsDownloadingZip(false);
+    }
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedFiles.size === filteredFiles.length) {
+      setSelectedFiles(new Set());
+    } else {
+      setSelectedFiles(new Set(filteredFiles.map(f => f.serverRelativeUrl)));
+    }
+  };
+
+  const toggleSelectFile = (url: string) => {
+    const next = new Set(selectedFiles);
+    if (next.has(url)) {
+      next.delete(url);
+    } else {
+      next.add(url);
+    }
+    setSelectedFiles(next);
+  };
+
   const handleDelete = async (file: PdfFile) => {
     if (!window.confirm(`Tem certeza que deseja excluir o arquivo "${file.name}"?`)) return;
 
@@ -106,6 +172,12 @@ export default function App() {
   const filteredFiles = useMemo(() => {
     return files.filter(f => f.name.toLowerCase().includes(searchTerm.toLowerCase()));
   }, [files, searchTerm]);
+
+  const totalPages = Math.ceil(filteredFiles.length / itemsPerPage);
+  const paginatedFiles = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredFiles.slice(start, start + itemsPerPage);
+  }, [filteredFiles, currentPage]);
 
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes';
@@ -192,6 +264,20 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-3 w-full md:w-auto">
+            {selectedFiles.size > 0 && (
+              <button
+                onClick={handleZipDownload}
+                disabled={isDownloadingZip}
+                className="flex items-center justify-center gap-2 px-4 py-2 bg-dhl-yellow text-dhl-red hover:bg-yellow-400 rounded-xl transition-all font-bold text-sm w-full md:w-auto disabled:opacity-50 shadow-sm"
+              >
+                {isDownloadingZip ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Files className="w-4 h-4" />
+                )}
+                ZIP ({selectedFiles.size})
+              </button>
+            )}
             <button
               onClick={fetchFiles}
               disabled={loading}
@@ -241,6 +327,18 @@ export default function App() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="px-6 py-4 w-10">
+                      <button 
+                        onClick={toggleSelectAll}
+                        className="text-gray-400 hover:text-dhl-red transition-colors"
+                      >
+                        {selectedFiles.size === filteredFiles.length && filteredFiles.length > 0 ? (
+                          <CheckSquare className="w-5 h-5 text-dhl-red" />
+                        ) : (
+                          <Square className="w-5 h-5" />
+                        )}
+                      </button>
+                    </th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Arquivo</th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400 hidden sm:table-cell">Data de Criação</th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400 hidden md:table-cell">Tamanho</th>
@@ -248,13 +346,25 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {filteredFiles.map((file) => (
+                  {paginatedFiles.map((file) => (
                     <motion.tr 
                       key={file.serverRelativeUrl}
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      className="hover:bg-gray-50/50 transition-colors group"
+                      className={`hover:bg-gray-50/50 transition-colors group ${selectedFiles.has(file.serverRelativeUrl) ? 'bg-red-50/30' : ''}`}
                     >
+                      <td className="px-6 py-4">
+                        <button 
+                          onClick={() => toggleSelectFile(file.serverRelativeUrl)}
+                          className="text-gray-400 hover:text-dhl-red transition-colors"
+                        >
+                          {selectedFiles.has(file.serverRelativeUrl) ? (
+                            <CheckSquare className="w-5 h-5 text-dhl-red" />
+                          ) : (
+                            <Square className="w-5 h-5" />
+                          )}
+                        </button>
+                      </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <div className="bg-red-50 p-2 rounded-lg group-hover:bg-red-100 transition-colors">
@@ -316,6 +426,58 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Pagination Controls */}
+          {!loading && filteredFiles.length > 0 && (
+            <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+                Mostrando {Math.min(filteredFiles.length, (currentPage - 1) * itemsPerPage + 1)} - {Math.min(filteredFiles.length, currentPage * itemsPerPage)} de {filteredFiles.length}
+              </p>
+              
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="p-2 text-gray-500 hover:bg-white hover:shadow-sm rounded-lg transition-all disabled:opacity-30"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: totalPages }, (_, i) => i + 1)
+                    .filter(p => {
+                      if (totalPages <= 5) return true;
+                      if (p === 1 || p === totalPages) return true;
+                      return Math.abs(p - currentPage) <= 1;
+                    })
+                    .map((p, i, arr) => (
+                      <React.Fragment key={p}>
+                        {i > 0 && arr[i-1] !== p - 1 && <span className="text-gray-300 px-1">...</span>}
+                        <button
+                          onClick={() => setCurrentPage(p)}
+                          className={`w-8 h-8 flex items-center justify-center rounded-lg text-xs font-black transition-all ${
+                            currentPage === p 
+                              ? 'bg-dhl-red text-white shadow-md shadow-red-200' 
+                              : 'text-gray-500 hover:bg-white hover:shadow-sm'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      </React.Fragment>
+                    ))
+                  }
+                </div>
+
+                <button
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-2 text-gray-500 hover:bg-white hover:shadow-sm rounded-lg transition-all disabled:opacity-30"
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </div>
             </div>
           )}
         </div>
