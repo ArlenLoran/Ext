@@ -1,6 +1,6 @@
 /**
  * SharePoint Integration Service
- * Handles listing, downloading and renaming XML files from SharePoint folders.
+ * Handles listing, downloading and deleting PDF files from SharePoint folders using the page context.
  */
 
 declare global {
@@ -9,15 +9,20 @@ declare global {
   }
 }
 
-export interface SharePointXmlFile {
-  name: string;
-  serverRelativeUrl: string;
-  file: File;
+function isDev() {
+  return !window._spPageContextInfo;
 }
 
 function getContext() {
   const ctx = window._spPageContextInfo;
   if (!ctx) {
+    if (isDev()) {
+      return {
+        siteAbsoluteUrl: 'https://dhl.sharepoint.com/sites/dev',
+        webServerRelativeUrl: '/sites/dev',
+        formDigestValue: 'MOCK_DIGEST'
+      };
+    }
     throw new Error('SharePoint context (_spPageContextInfo) não encontrado. Este app deve rodar dentro de uma página SharePoint.');
   }
   return ctx;
@@ -33,7 +38,6 @@ function getWebServerRelativeUrl(): string {
 }
 
 async function getRequestDigest(): Promise<string> {
-  // First try to get a fresh digest from the API
   try {
     const response = await fetch(`${getSiteAbsoluteUrl()}/_api/contextinfo`, {
       method: 'POST',
@@ -47,7 +51,6 @@ async function getRequestDigest(): Promise<string> {
     console.warn('Falha ao obter FormDigest via API, tentando contexto local:', err);
   }
 
-  // Fallback to local context
   const value = String(getContext().formDigestValue || '').trim();
   if (!value) throw new Error('FormDigest não encontrado no contexto do SharePoint.');
   return value;
@@ -70,20 +73,16 @@ function normalizeFolderServerRelativeUrl(folderPath: string): string {
   return `${webRel}/${cleanFolder}`.replace(/\/+/g, '/');
 }
 
-export function buildRenamedXmlFileName(fileName: string): string {
-  const trimmed = String(fileName || '').trim();
-  if (!trimmed) throw new Error('Nome de arquivo inválido para renomeação.');
-  if (/^Validado_/i.test(trimmed)) return trimmed;
-  return `Validado_${trimmed}`;
-}
-
 function buildDecodedUrlApiSegment(serverRelativeUrl: string): string {
-  // SharePoint GetFileByServerRelativePath expects a DECODED url
   const decoded = decodeURIComponent(serverRelativeUrl);
   return `decodedurl='${escapeODataString(decoded)}'`;
 }
 
 export async function downloadFileFromSharePoint(serverRelativeUrl: string, fileName: string): Promise<Blob> {
+  if (isDev()) {
+    // Return a dummy PDF blob in dev mode
+    return new Blob(['%PDF-1.4 mock content'], { type: 'application/pdf' });
+  }
   const decodedUrl = buildDecodedUrlApiSegment(serverRelativeUrl);
   const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${decodedUrl})/$value`;
 
@@ -103,74 +102,11 @@ export async function downloadFileFromSharePoint(serverRelativeUrl: string, file
   return response.blob();
 }
 
-export async function listAllXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'): Promise<{ name: string; serverRelativeUrl: string; isValidated: boolean; timeCreated: string }[]> {
-  const folderServerRelativeUrl = normalizeFolderServerRelativeUrl(folderPath);
-  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFolderByServerRelativeUrl('${escapeODataString(folderServerRelativeUrl)}')/Files?$select=Name,ServerRelativeUrl,TimeCreated&$orderby=Name asc`;
-
-  const response = await fetch(endpoint, {
-    method: 'GET',
-    headers: { Accept: 'application/json; odata=verbose' },
-    credentials: 'same-origin'
-  });
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => '');
-    throw new Error(message || 'Não foi possível consultar a pasta de XMLs no SharePoint.');
-  }
-
-  const data = await response.json();
-  const files = (data?.d?.results || []) as Array<{ Name: string; ServerRelativeUrl: string; TimeCreated: string }>;
-  
-  return files
-    .filter((item) => /\.xml$/i.test(item.Name))
-    .map(item => ({
-      name: item.Name,
-      serverRelativeUrl: item.ServerRelativeUrl,
-      isValidated: /^Validado_/i.test(item.Name),
-      timeCreated: item.TimeCreated
-    }));
-}
-
-export async function listXmlFilesFromFolder(folderPath = 'SiteAssets/XMLs'): Promise<SharePointXmlFile[]> {
-  const folderServerRelativeUrl = normalizeFolderServerRelativeUrl(folderPath);
-  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFolderByServerRelativeUrl('${escapeODataString(folderServerRelativeUrl)}')/Files?$select=Name,ServerRelativeUrl&$orderby=Name asc`;
-
-  const response = await fetch(endpoint, {
-    method: 'GET',
-    headers: { Accept: 'application/json; odata=verbose' },
-    credentials: 'same-origin'
-  });
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => '');
-    throw new Error(message || 'Não foi possível consultar a pasta de XMLs no SharePoint.');
-  }
-
-  const data = await response.json();
-  const files = (data?.d?.results || []) as Array<{ Name: string; ServerRelativeUrl: string }>;
-  // Filter for .xml files and EXCLUDE those already marked as "Validado" (prefix Validado_)
-  const xmlFiles = files.filter((item) => /\.xml$/i.test(item.Name) && !/^Validado_/i.test(item.Name));
-
-  const downloaded = await Promise.all(
-    xmlFiles.map(async (item) => {
-      const blob = await downloadFileFromSharePoint(item.ServerRelativeUrl, item.Name);
-      const file = new File([blob], item.Name, {
-        type: 'text/xml',
-        lastModified: Date.now()
-      });
-
-      return {
-        name: item.Name,
-        serverRelativeUrl: item.ServerRelativeUrl,
-        file
-      } satisfies SharePointXmlFile;
-    })
-  );
-
-  return downloaded;
-}
-
 export async function deleteFileFromSharePoint(serverRelativeUrl: string): Promise<void> {
+  if (isDev()) {
+    console.log('Dev Mode: Deleting file', serverRelativeUrl);
+    return Promise.resolve();
+  }
   const decodedUrl = buildDecodedUrlApiSegment(serverRelativeUrl);
   const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${decodedUrl})`;
 
@@ -191,6 +127,13 @@ export async function deleteFileFromSharePoint(serverRelativeUrl: string): Promi
 }
 
 export async function listPdfFilesFromFolder(folderPath = 'SharedDocuments/DACE'): Promise<{ name: string; serverRelativeUrl: string; timeCreated: string; size: number }[]> {
+  if (isDev()) {
+    return [
+      { name: 'DACE_NF_12345.pdf', serverRelativeUrl: '/sites/dev/SharedDocuments/DACE/DACE_NF_12345.pdf', timeCreated: new Date().toISOString(), size: 1024 * 450 },
+      { name: 'DACE_NF_67890.pdf', serverRelativeUrl: '/sites/dev/SharedDocuments/DACE/DACE_NF_67890.pdf', timeCreated: new Date(Date.now() - 86400000).toISOString(), size: 1024 * 1200 },
+      { name: 'DACE_NF_ABCDE.pdf', serverRelativeUrl: '/sites/dev/SharedDocuments/DACE/DACE_NF_ABCDE.pdf', timeCreated: new Date(Date.now() - 172800000).toISOString(), size: 1024 * 850 },
+    ];
+  }
   const folderServerRelativeUrl = normalizeFolderServerRelativeUrl(folderPath);
   const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFolderByServerRelativeUrl('${escapeODataString(folderServerRelativeUrl)}')/Files?$select=Name,ServerRelativeUrl,TimeCreated,Length&$orderby=TimeCreated desc`;
 
@@ -216,75 +159,4 @@ export async function listPdfFilesFromFolder(folderPath = 'SharedDocuments/DACE'
       timeCreated: item.TimeCreated,
       size: parseInt(item.Length, 10)
     }));
-}
-
-export async function renameXmlFileAsValidated(serverRelativeUrl: string): Promise<string> {
-  const currentUrl = String(serverRelativeUrl || '').trim();
-  if (!currentUrl) throw new Error('URL do arquivo no SharePoint não informada.');
-
-  // Ensure we have a decoded version for path manipulation
-  const decodedUrl = decodeURIComponent(currentUrl);
-  const segments = decodedUrl.split('/');
-  const currentName = segments.pop() || '';
-  const renamed = buildRenamedXmlFileName(currentName);
-
-  if (renamed === currentName) return currentUrl;
-
-  const targetDecodedUrl = `${segments.join('/')}/${renamed}`;
-  
-  // Use GetFileByServerRelativePath for better handling of special characters
-  const decodedUrlSegment = `decodedurl='${escapeODataString(decodedUrl)}'`;
-  const targetUrlSegment = `newurl='${escapeODataString(targetDecodedUrl)}'`;
-  
-  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${decodedUrlSegment})/moveto(${targetUrlSegment},flags=1)`;
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json; odata=verbose',
-      'X-RequestDigest': await getRequestDigest()
-    },
-    credentials: 'same-origin'
-  });
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => '');
-    console.error('SharePoint Rename Error:', message);
-    throw new Error(message || `Não foi possível renomear o arquivo ${currentName} no SharePoint.`);
-  }
-
-  return targetDecodedUrl;
-}
-
-export async function revertXmlFileValidation(serverRelativeUrl: string): Promise<string> {
-  const currentUrl = String(serverRelativeUrl || '').trim();
-  if (!currentUrl) throw new Error('URL do arquivo no SharePoint não informada.');
-
-  const decodedUrl = decodeURIComponent(currentUrl);
-  const segments = decodedUrl.split('/');
-  const currentName = segments.pop() || '';
-  
-  // Remove "Validado_" from the beginning
-  const originalName = currentName.replace(/^Validado_/i, '');
-
-  if (originalName === currentName) return currentUrl;
-
-  const targetDecodedUrl = `${segments.join('/')}/${originalName}`;
-  const endpoint = `${getSiteAbsoluteUrl()}/_api/web/GetFileByServerRelativePath(${buildDecodedUrlApiSegment(currentUrl)})/moveto(newurl='${escapeODataString(targetDecodedUrl)}',flags=1)`;
-
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/json; odata=verbose',
-      'X-RequestDigest': await getRequestDigest()
-    },
-    credentials: 'same-origin'
-  });
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => '');
-    throw new Error(message || `Não foi possível reverter a renomeação do arquivo ${currentName} no SharePoint.`);
-  }
-
-  return targetDecodedUrl;
 }

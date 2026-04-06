@@ -22,13 +22,7 @@ import {
   downloadFileFromSharePoint, 
   deleteFileFromSharePoint 
 } from './services/sharepointService';
-
-interface PdfFile {
-  name: string;
-  serverRelativeUrl: string;
-  timeCreated: string;
-  size: number;
-}
+import { PdfFile } from './types';
 
 export default function App() {
   const [files, setFiles] = useState<PdfFile[]>([]);
@@ -39,6 +33,7 @@ export default function App() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const isDevMode = !window._spPageContextInfo;
 
   const folderPath = 'SharedDocuments/DACE';
 
@@ -134,7 +129,12 @@ export default function App() {
           </div>
           <div>
             <h1 className="text-2xl font-black tracking-tighter italic">DHL <span className="text-dhl-yellow not-italic font-bold ml-1">DACE MANAGER</span></h1>
-            <p className="text-xs opacity-80 uppercase tracking-widest font-semibold">Gestão de Notas Fiscais PDF</p>
+            <div className="flex items-center gap-2">
+              <p className="text-xs opacity-80 uppercase tracking-widest font-semibold">Gestão de Notas Fiscais PDF</p>
+              {isDevMode && (
+                <span className="bg-white/20 text-[8px] px-1.5 py-0.5 rounded border border-white/30 font-black uppercase tracking-tighter">Dev Mode (Mock Data)</span>
+              )}
+            </div>
           </div>
         </div>
         <div className="hidden md:block text-right">
@@ -144,6 +144,23 @@ export default function App() {
       </header>
 
       <main className="max-w-6xl mx-auto p-6 space-y-6">
+        {/* Dev Mode Banner */}
+        {isDevMode && (
+          <motion.div 
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-blue-50 border border-blue-100 p-4 rounded-2xl flex items-start gap-3"
+          >
+            <AlertCircle className="text-blue-500 shrink-0 w-5 h-5" />
+            <div>
+              <p className="text-xs font-bold text-blue-800 uppercase tracking-tight">Ambiente de Desenvolvimento (AI Studio)</p>
+              <p className="text-[11px] text-blue-600 mt-0.5">
+                O contexto do SharePoint não foi detectado. O sistema está exibindo **dados fictícios (Mock Data)** para que você possa visualizar a interface e testar as funcionalidades. Quando publicado no SharePoint, o sistema conectará automaticamente à pasta real.
+              </p>
+            </div>
+          </motion.div>
+        )}
+
         {/* Notification Toast */}
         <AnimatePresence>
           {notification && (
