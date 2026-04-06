@@ -1,5 +1,5 @@
 {
-  "name": "DHL XML Validator",
-  "description": "Sistema profissional de validação de arquivos XML de NFe com padrão visual DHL.",
+  "name": "DHL DACE Manager",
+  "description": "Sistema de gestão de notas fiscais PDF (DACE) integrado ao SharePoint para visualização, download e exclusão.",
   "requestFramePermissions": []
 }
