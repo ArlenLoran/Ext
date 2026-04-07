@@ -323,18 +323,10 @@ async function ensureUser(loginName: string): Promise<any> {
   return data.d;
 }
 
-export async function addUserToGroup(groupId: number, loginName: string): Promise<void> {
-  if (isDev()) {
-    console.log('Dev Mode: Adding user to group', groupId, loginName);
-    return;
-  }
-
-  // First, ensure the user exists in the site collection
-  await ensureUser(loginName);
-
+async function inviteExternalUser(groupId: number, email: string): Promise<void> {
   const siteUrl = getSiteAbsoluteUrl();
   const digest = await getRequestDigest();
-  const endpoint = `${siteUrl}/_api/web/sitegroups(${groupId})/users`;
+  const endpoint = `${siteUrl}/_api/Web/ShareObject`;
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -344,15 +336,68 @@ export async function addUserToGroup(groupId: number, loginName: string): Promis
       'X-RequestDigest': digest
     },
     body: JSON.stringify({
-      '__metadata': { 'type': 'SP.User' },
-      'LoginName': loginName
+      'url': siteUrl,
+      'peoplePickerInput': JSON.stringify([{ 'Key': email }]),
+      'roleValue': `group:${groupId}`,
+      'groupId': groupId,
+      'propagateAcl': false,
+      'sendEmail': true,
+      'includeAnonymousLinkInEmail': false,
+      'useSimplifiedRoles': true
     })
   });
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('SharePoint Add User Error:', errorText);
-    throw new Error('Falha ao adicionar usuário ao grupo.');
+    console.error('SharePoint Invite Error:', errorText);
+    throw new Error('Falha ao enviar convite para o usuário externo.');
+  }
+}
+
+export async function addUserToGroup(groupId: number, loginName: string): Promise<void> {
+  if (isDev()) {
+    console.log('Dev Mode: Adding user to group', groupId, loginName);
+    return;
+  }
+
+  try {
+    // First, try to ensure the user exists in the site collection
+    await ensureUser(loginName);
+
+    const siteUrl = getSiteAbsoluteUrl();
+    const digest = await getRequestDigest();
+    const endpoint = `${siteUrl}/_api/web/sitegroups(${groupId})/users`;
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json; odata=verbose',
+        'Content-Type': 'application/json; odata=verbose',
+        'X-RequestDigest': digest
+      },
+      body: JSON.stringify({
+        '__metadata': { 'type': 'SP.User' },
+        'LoginName': loginName
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('SharePoint Add User Error:', errorText);
+      throw new Error('Falha ao adicionar usuário ao grupo.');
+    }
+  } catch (err: any) {
+    // If the user was not found, they might be a new external user.
+    // Try to invite them using the ShareObject API which handles external invitations.
+    if (err.message.includes('não foi encontrado') || err.message.includes('could not be found')) {
+      const email = loginName.includes('|') ? loginName.split('|').pop() : loginName;
+      if (email && email.includes('@')) {
+        console.log('User not found, attempting to invite external user:', email);
+        await inviteExternalUser(groupId, email);
+        return;
+      }
+    }
+    throw err;
   }
 }
 
