@@ -76,12 +76,20 @@ export default function App() {
   const handleView = async (file: PdfFile) => {
     try {
       const blob = await downloadFileFromSharePoint(file.serverRelativeUrl, file.name);
-      const url = URL.createObjectURL(blob);
+      // Force the MIME type to application/pdf to ensure the browser treats it as a viewable document
+      const pdfBlob = new Blob([blob], { type: 'application/pdf' });
+      const url = URL.createObjectURL(pdfBlob);
       setPdfUrl(url);
       setViewingFile(file);
     } catch (err) {
       showNotification('error', 'Não foi possível carregar o PDF para visualização.');
     }
+  };
+
+  const closeViewer = () => {
+    if (pdfUrl) URL.revokeObjectURL(pdfUrl);
+    setViewingFile(null);
+    setPdfUrl(null);
   };
 
   const handleDownload = async (file: PdfFile) => {
@@ -483,7 +491,6 @@ export default function App() {
         </div>
       </main>
 
-      {/* PDF Viewer Modal */}
       <AnimatePresence>
         {viewingFile && pdfUrl && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-8">
@@ -491,10 +498,7 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => {
-                setViewingFile(null);
-                setPdfUrl(null);
-              }}
+              onClick={closeViewer}
               className="absolute inset-0 bg-dhl-dark/80 backdrop-blur-sm"
             />
             <motion.div
@@ -522,10 +526,7 @@ export default function App() {
                     <Download size={20} />
                   </button>
                   <button
-                    onClick={() => {
-                      setViewingFile(null);
-                      setPdfUrl(null);
-                    }}
+                    onClick={closeViewer}
                     className="p-2 text-gray-500 hover:bg-gray-100 rounded-xl transition-all"
                   >
                     <X size={20} />
@@ -533,10 +534,10 @@ export default function App() {
                 </div>
               </div>
               <div className="flex-1 bg-gray-100 relative">
-                <iframe
-                  src={`${pdfUrl}#toolbar=0`}
+                <embed
+                  src={`${pdfUrl}#toolbar=0&navpanes=0&scrollbar=0`}
+                  type="application/pdf"
                   className="w-full h-full border-none"
-                  title="PDF Viewer"
                 />
               </div>
             </motion.div>
