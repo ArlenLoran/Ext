@@ -3,4 +3,6 @@ export interface PdfFile {
   serverRelativeUrl: string;
   timeCreated: string;
   size: number;
+  invoiceNumber?: string;
+  isIndexing?: boolean;
 }

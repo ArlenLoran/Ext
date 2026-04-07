@@ -78,6 +78,140 @@ function buildDecodedUrlApiSegment(serverRelativeUrl: string): string {
   return `decodedurl='${escapeODataString(decoded)}'`;
 }
 
+const INDEX_LIST_NAME = 'DACE_Index';
+
+export async function ensureIndexListExists(): Promise<void> {
+  if (isDev()) return;
+  
+  const siteUrl = getSiteAbsoluteUrl();
+  const digest = await getRequestDigest();
+  
+  // Check if list exists
+  const checkResponse = await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')`, {
+    headers: { Accept: 'application/json; odata=verbose' }
+  });
+  
+  if (checkResponse.ok) return; // List already exists
+  
+  // Create list
+  const createResponse = await fetch(`${siteUrl}/_api/web/lists`, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json; odata=verbose',
+      'Content-Type': 'application/json; odata=verbose',
+      'X-RequestDigest': digest
+    },
+    body: JSON.stringify({
+      '__metadata': { 'type': 'SP.List' },
+      'AllowContentTypes': true,
+      'BaseTemplate': 100,
+      'ContentTypesEnabled': true,
+      'Description': 'Index de Notas Fiscais DACE',
+      'Title': INDEX_LIST_NAME
+    })
+  });
+  
+  if (!createResponse.ok) {
+    throw new Error('Falha ao criar a lista de indexação no SharePoint.');
+  }
+  
+  // Add InvoiceNumber field
+  await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/fields`, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json; odata=verbose',
+      'Content-Type': 'application/json; odata=verbose',
+      'X-RequestDigest': digest
+    },
+    body: JSON.stringify({
+      '__metadata': { 'type': 'SP.Field' },
+      'Title': 'InvoiceNumber',
+      'FieldTypeKind': 2, // Text
+      'Required': false
+    })
+  });
+}
+
+export async function getIndexData(): Promise<Record<string, string>> {
+  if (isDev()) {
+    return {
+      '/sites/dev/Shared Documents/DACE/DACE_NF_12345.pdf': '12345',
+      '/sites/dev/Shared Documents/DACE/DACE_NF_67890.pdf': '67890'
+    };
+  }
+  
+  const siteUrl = getSiteAbsoluteUrl();
+  const endpoint = `${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/items?$select=Title,InvoiceNumber&$top=5000`;
+  
+  const response = await fetch(endpoint, {
+    headers: { Accept: 'application/json; odata=verbose' }
+  });
+  
+  if (!response.ok) return {};
+  
+  const data = await response.json();
+  const items = data?.d?.results || [];
+  
+  const index: Record<string, string> = {};
+  items.forEach((item: any) => {
+    index[item.Title] = item.InvoiceNumber;
+  });
+  
+  return index;
+}
+
+export async function updateIndexItem(serverRelativeUrl: string, invoiceNumber: string): Promise<void> {
+  if (isDev()) {
+    console.log('Dev Mode: Updating index', serverRelativeUrl, invoiceNumber);
+    return;
+  }
+  
+  const siteUrl = getSiteAbsoluteUrl();
+  const digest = await getRequestDigest();
+  
+  // Check if item already exists to decide between POST (add) or MERGE (update)
+  const checkEndpoint = `${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/items?$filter=Title eq '${escapeODataString(serverRelativeUrl)}'&$select=Id`;
+  const checkResponse = await fetch(checkEndpoint, {
+    headers: { Accept: 'application/json; odata=verbose' }
+  });
+  
+  const checkData = await checkResponse.json();
+  const existingItem = checkData?.d?.results?.[0];
+  
+  if (existingItem) {
+    // Update
+    await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/items(${existingItem.Id})`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json; odata=verbose',
+        'Content-Type': 'application/json; odata=verbose',
+        'X-RequestDigest': digest,
+        'X-HTTP-Method': 'MERGE',
+        'IF-MATCH': '*'
+      },
+      body: JSON.stringify({
+        '__metadata': { 'type': `SP.Data.${INDEX_LIST_NAME}ListItem` },
+        'InvoiceNumber': invoiceNumber
+      })
+    });
+  } else {
+    // Add
+    await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/items`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json; odata=verbose',
+        'Content-Type': 'application/json; odata=verbose',
+        'X-RequestDigest': digest
+      },
+      body: JSON.stringify({
+        '__metadata': { 'type': `SP.Data.${INDEX_LIST_NAME}ListItem` },
+        'Title': serverRelativeUrl,
+        'InvoiceNumber': invoiceNumber
+      })
+    });
+  }
+}
+
 export async function downloadFileFromSharePoint(serverRelativeUrl: string, fileName: string): Promise<Blob> {
   if (isDev()) {
     // Return a dummy PDF blob in dev mode

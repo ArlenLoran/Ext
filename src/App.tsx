@@ -25,8 +25,12 @@ import {
 import { 
   listPdfFilesFromFolder, 
   downloadFileFromSharePoint, 
-  deleteFileFromSharePoint 
+  deleteFileFromSharePoint,
+  ensureIndexListExists,
+  getIndexData,
+  updateIndexItem
 } from './services/sharepointService';
+import { extractInvoiceNumber } from './services/geminiService';
 import { PdfFile } from './types';
 
 export default function App() {
@@ -38,6 +42,7 @@ export default function App() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [isIndexingAll, setIsIndexingAll] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
@@ -50,8 +55,18 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const pdfFiles = await listPdfFilesFromFolder(folderPath);
-      setFiles(pdfFiles);
+      await ensureIndexListExists();
+      const [pdfFiles, indexData] = await Promise.all([
+        listPdfFilesFromFolder(folderPath),
+        getIndexData()
+      ]);
+      
+      const mergedFiles = pdfFiles.map(file => ({
+        ...file,
+        invoiceNumber: indexData[file.serverRelativeUrl] || undefined
+      }));
+      
+      setFiles(mergedFiles);
     } catch (err: any) {
       console.error('Erro ao buscar PDFs:', err);
       setError(err.message || 'Erro ao conectar com o SharePoint.');
@@ -162,6 +177,49 @@ export default function App() {
     setSelectedFiles(next);
   };
 
+  const handleIndexFile = async (file: PdfFile) => {
+    if (file.invoiceNumber || file.isIndexing) return;
+    
+    setFiles(prev => prev.map(f => f.serverRelativeUrl === file.serverRelativeUrl ? { ...f, isIndexing: true } : f));
+    
+    try {
+      const blob = await downloadFileFromSharePoint(file.serverRelativeUrl, file.name);
+      const nf = await extractInvoiceNumber(blob);
+      
+      if (nf) {
+        await updateIndexItem(file.serverRelativeUrl, nf);
+        setFiles(prev => prev.map(f => f.serverRelativeUrl === file.serverRelativeUrl ? { ...f, invoiceNumber: nf, isIndexing: false } : f));
+        showNotification('success', `NF ${nf} extraída para ${file.name}`);
+      } else {
+        showNotification('error', `Número da NF não encontrado em ${file.name}`);
+        setFiles(prev => prev.map(f => f.serverRelativeUrl === file.serverRelativeUrl ? { ...f, isIndexing: false } : f));
+      }
+    } catch (err) {
+      showNotification('error', `Erro ao indexar ${file.name}`);
+      setFiles(prev => prev.map(f => f.serverRelativeUrl === file.serverRelativeUrl ? { ...f, isIndexing: false } : f));
+    }
+  };
+
+  const handleIndexAll = async () => {
+    const unindexed = files.filter(f => !f.invoiceNumber && !f.isIndexing);
+    if (unindexed.length === 0) {
+      showNotification('success', 'Todos os arquivos já estão indexados.');
+      return;
+    }
+
+    setIsIndexingAll(true);
+    showNotification('success', `Iniciando indexação de ${unindexed.length} arquivos...`);
+
+    for (const file of unindexed) {
+      await handleIndexFile(file);
+      // Small delay to avoid rate limits if many files
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    setIsIndexingAll(false);
+    showNotification('success', 'Indexação em lote concluída.');
+  };
+
   const handleDelete = async (file: PdfFile) => {
     if (!window.confirm(`Tem certeza que deseja excluir o arquivo "${file.name}"?`)) return;
 
@@ -178,7 +236,10 @@ export default function App() {
   };
 
   const filteredFiles = useMemo(() => {
-    return files.filter(f => f.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    return files.filter(f => 
+      f.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+      (f.invoiceNumber && f.invoiceNumber.includes(searchTerm))
+    );
   }, [files, searchTerm]);
 
   const totalPages = Math.ceil(filteredFiles.length / itemsPerPage);
@@ -272,6 +333,18 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-3 w-full md:w-auto">
+            <button
+              onClick={handleIndexAll}
+              disabled={loading || isIndexingAll}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl transition-all font-bold text-sm w-full md:w-auto disabled:opacity-50 shadow-sm"
+            >
+              {isIndexingAll ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              Indexar Tudo
+            </button>
             {selectedFiles.size > 0 && (
               <button
                 onClick={handleZipDownload}
@@ -348,6 +421,7 @@ export default function App() {
                       </button>
                     </th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Arquivo</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400">Número NF</th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400 hidden sm:table-cell">Data de Criação</th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400 hidden md:table-cell">Tamanho</th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-gray-400 text-right">Ações</th>
@@ -383,10 +457,29 @@ export default function App() {
                               {file.name}
                             </p>
                             <p className="text-[10px] text-gray-400 font-medium uppercase tracking-tighter sm:hidden">
-                              {formatDate(file.timeCreated)} • {formatSize(file.size)}
+                              {file.invoiceNumber ? `NF: ${file.invoiceNumber} • ` : ''}{formatDate(file.timeCreated)} • {formatSize(file.size)}
                             </p>
                           </div>
                         </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        {file.invoiceNumber ? (
+                          <span className="bg-green-50 text-green-700 text-[10px] font-black px-2 py-1 rounded border border-green-100 uppercase tracking-tighter">
+                            NF: {file.invoiceNumber}
+                          </span>
+                        ) : file.isIndexing ? (
+                          <div className="flex items-center gap-2 text-blue-500 animate-pulse">
+                            <Loader2 size={12} className="animate-spin" />
+                            <span className="text-[10px] font-bold uppercase tracking-tighter">Lendo...</span>
+                          </div>
+                        ) : (
+                          <button 
+                            onClick={() => handleIndexFile(file)}
+                            className="text-[10px] font-bold text-gray-400 hover:text-blue-500 uppercase tracking-tighter underline underline-offset-2"
+                          >
+                            Indexar
+                          </button>
+                        )}
                       </td>
                       <td className="px-6 py-4 hidden sm:table-cell">
                         <div className="flex items-center gap-2 text-gray-500">
