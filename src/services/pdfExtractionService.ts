@@ -1,7 +1,8 @@
 import * as pdfjsLib from 'pdfjs-dist';
 
-// Configure worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Configure worker using jsdelivr which is highly reliable
+// Note: pdfjs-dist 4.0+ uses .mjs for the worker
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
 
 export async function extractInvoiceNumberWithoutAI(pdfBlob: Blob): Promise<string | null> {
   try {
