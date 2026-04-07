@@ -30,7 +30,7 @@ import {
   getIndexData,
   updateIndexItem
 } from './services/sharepointService';
-import { extractInvoiceNumber } from './services/geminiService';
+import { extractInvoiceNumberWithoutAI } from './services/pdfExtractionService';
 import { PdfFile } from './types';
 
 export default function App() {
@@ -184,7 +184,7 @@ export default function App() {
     
     try {
       const blob = await downloadFileFromSharePoint(file.serverRelativeUrl, file.name);
-      const nf = await extractInvoiceNumber(blob);
+      const nf = await extractInvoiceNumberWithoutAI(blob);
       
       if (nf) {
         await updateIndexItem(file.serverRelativeUrl, nf);
