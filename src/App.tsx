@@ -20,7 +20,11 @@ import {
   ChevronLeft,
   CheckSquare,
   Square,
-  Files
+  Files,
+  Users,
+  UserPlus,
+  UserMinus,
+  Plus
 } from 'lucide-react';
 import { 
   listPdfFilesFromFolder, 
@@ -28,7 +32,11 @@ import {
   deleteFileFromSharePoint,
   ensureIndexListExists,
   getIndexData,
-  updateIndexItem
+  updateIndexItem,
+  getGroupMembers,
+  addUserToGroup,
+  removeUserFromGroup,
+  searchUsers
 } from './services/sharepointService';
 import { extractInvoiceNumberWithoutAI } from './services/pdfExtractionService';
 import { PdfFile } from './types';
@@ -44,6 +52,16 @@ export default function App() {
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [isIndexingAll, setIsIndexingAll] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  
+  // Group Management State
+  const [showGroupModal, setShowGroupModal] = useState(false);
+  const [groupMembers, setGroupMembers] = useState<{ id: number; title: string; email: string; loginName: string }[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<{ title: string; loginName: string }[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [isAddingUser, setIsAddingUser] = useState<string | null>(null);
+  const [isRemovingUser, setIsRemovingUser] = useState<number | null>(null);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [isDownloadingZip, setIsDownloadingZip] = useState(false);
   const isDevMode = !window._spPageContextInfo;
@@ -220,6 +238,71 @@ export default function App() {
     showNotification('success', 'Indexação em lote concluída.');
   };
 
+  // Group Management Functions
+  const fetchGroupMembers = async () => {
+    setLoadingMembers(true);
+    try {
+      const members = await getGroupMembers(10);
+      setGroupMembers(members);
+    } catch (err: any) {
+      showNotification('error', 'Erro ao carregar membros do grupo.');
+    } finally {
+      setLoadingMembers(false);
+    }
+  };
+
+  const handleSearchUsers = async (query: string) => {
+    setUserSearchQuery(query);
+    if (query.length < 3) {
+      setSearchResults([]);
+      return;
+    }
+    setIsSearching(true);
+    try {
+      const results = await searchUsers(query);
+      setSearchResults(results);
+    } catch (err) {
+      console.error('Erro ao pesquisar usuários:', err);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleAddUser = async (user: { title: string; loginName: string }) => {
+    setIsAddingUser(user.loginName);
+    try {
+      await addUserToGroup(10, user.loginName);
+      showNotification('success', `${user.title} adicionado ao grupo.`);
+      setUserSearchQuery('');
+      setSearchResults([]);
+      fetchGroupMembers();
+    } catch (err) {
+      showNotification('error', 'Erro ao adicionar usuário.');
+    } finally {
+      setIsAddingUser(null);
+    }
+  };
+
+  const handleRemoveUser = async (user: { id: number; title: string }) => {
+    if (!window.confirm(`Remover ${user.title} do grupo?`)) return;
+    setIsRemovingUser(user.id);
+    try {
+      await removeUserFromGroup(10, user.id);
+      showNotification('success', `${user.title} removido do grupo.`);
+      fetchGroupMembers();
+    } catch (err) {
+      showNotification('error', 'Erro ao remover usuário.');
+    } finally {
+      setIsRemovingUser(null);
+    }
+  };
+
+  useEffect(() => {
+    if (showGroupModal) {
+      fetchGroupMembers();
+    }
+  }, [showGroupModal]);
+
   const handleDelete = async (file: PdfFile) => {
     if (!window.confirm(`Tem certeza que deseja excluir o arquivo "${file.name}"?`)) return;
 
@@ -333,6 +416,13 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-3 w-full md:w-auto">
+            <button
+              onClick={() => setShowGroupModal(true)}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-white border-2 border-gray-100 hover:border-dhl-red text-dhl-dark rounded-xl transition-all font-bold text-sm w-full md:w-auto shadow-sm"
+            >
+              <Users className="w-4 h-4 text-dhl-red" />
+              Gerenciar Acesso
+            </button>
             <button
               onClick={handleIndexAll}
               disabled={loading || isIndexingAll}
@@ -637,6 +727,131 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Group Management Modal */}
+      {showGroupModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden"
+          >
+            <div className="bg-dhl-red p-6 text-white flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <Users className="w-6 h-6" />
+                <h2 className="text-xl font-black uppercase tracking-tighter">Gerenciar Acesso (Grupo ID 10)</h2>
+              </div>
+              <button 
+                onClick={() => setShowGroupModal(false)}
+                className="p-2 hover:bg-white/20 rounded-full transition-colors"
+              >
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-6">
+              {/* Add User Section */}
+              <div className="space-y-3">
+                <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">Adicionar Novo Membro</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <Search className="h-4 w-4 text-gray-400" />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Pesquisar por nome ou e-mail..."
+                    value={userSearchQuery}
+                    onChange={(e) => handleSearchUsers(e.target.value)}
+                    className="block w-full pl-11 pr-4 py-3 bg-gray-50 border-2 border-transparent focus:border-dhl-red focus:bg-white rounded-2xl text-sm font-bold transition-all outline-none"
+                  />
+                  {isSearching && (
+                    <div className="absolute inset-y-0 right-0 pr-4 flex items-center">
+                      <Loader2 className="h-4 w-4 text-dhl-red animate-spin" />
+                    </div>
+                  )}
+                </div>
+
+                {/* Search Results Dropdown */}
+                {searchResults.length > 0 && (
+                  <div className="mt-2 bg-white border-2 border-gray-100 rounded-2xl shadow-xl overflow-hidden max-h-48 overflow-y-auto">
+                    {searchResults.map((user) => (
+                      <button
+                        key={user.loginName}
+                        onClick={() => handleAddUser(user)}
+                        disabled={isAddingUser === user.loginName}
+                        className="w-full flex items-center justify-between p-3 hover:bg-gray-50 transition-colors text-left border-b border-gray-50 last:border-0"
+                      >
+                        <span className="text-sm font-bold text-dhl-dark">{user.title}</span>
+                        {isAddingUser === user.loginName ? (
+                          <Loader2 className="w-4 h-4 text-dhl-red animate-spin" />
+                        ) : (
+                          <Plus className="w-4 h-4 text-dhl-red" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Members List Section */}
+              <div className="space-y-3">
+                <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">Membros Atuais ({groupMembers.length})</label>
+                <div className="bg-gray-50 rounded-2xl border-2 border-gray-100 overflow-hidden max-h-80 overflow-y-auto">
+                  {loadingMembers ? (
+                    <div className="p-12 flex flex-col items-center justify-center gap-3">
+                      <Loader2 className="w-8 h-8 text-dhl-red animate-spin" />
+                      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Carregando membros...</p>
+                    </div>
+                  ) : groupMembers.length === 0 ? (
+                    <div className="p-12 text-center">
+                      <p className="text-sm font-bold text-gray-400">Nenhum membro encontrado.</p>
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-gray-100">
+                      {groupMembers.map((member) => (
+                        <div key={member.id} className="p-4 flex items-center justify-between hover:bg-white transition-colors group">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-dhl-red/10 rounded-full flex items-center justify-center">
+                              <span className="text-dhl-red font-black text-sm">
+                                {member.title.charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                            <div>
+                              <p className="text-sm font-bold text-dhl-dark">{member.title}</p>
+                              <p className="text-[10px] font-medium text-gray-400 uppercase tracking-tighter">{member.email}</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleRemoveUser(member)}
+                            disabled={isRemovingUser === member.id}
+                            className="p-2 text-gray-400 hover:text-dhl-red hover:bg-red-50 rounded-xl transition-all"
+                            title="Remover do grupo"
+                          >
+                            {isRemovingUser === member.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <UserMinus className="w-4 h-4" />
+                            )}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 bg-gray-50 flex justify-end">
+              <button
+                onClick={() => setShowGroupModal(false)}
+                className="px-6 py-2 bg-white border-2 border-gray-200 text-gray-600 rounded-xl font-bold text-sm hover:bg-gray-100 transition-all"
+              >
+                Fechar
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Footer */}
       <footer className="max-w-6xl mx-auto p-6 text-center">

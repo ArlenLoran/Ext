@@ -263,6 +263,131 @@ export async function updateIndexItem(serverRelativeUrl: string, invoiceNumber: 
   }
 }
 
+export async function getGroupMembers(groupId: number): Promise<{ id: number; title: string; email: string; loginName: string }[]> {
+  if (isDev()) {
+    return [
+      { id: 1, title: 'Usuário Teste 1', email: 'user1@dhl.com', loginName: 'i:0#.f|membership|user1@dhl.com' },
+      { id: 2, title: 'Usuário Teste 2', email: 'user2@dhl.com', loginName: 'i:0#.f|membership|user2@dhl.com' }
+    ];
+  }
+
+  const siteUrl = getSiteAbsoluteUrl();
+  const endpoint = `${siteUrl}/_api/web/sitegroups(${groupId})/users?$select=Id,Title,Email,LoginName`;
+
+  const response = await fetch(endpoint, {
+    headers: { Accept: 'application/json; odata=verbose' }
+  });
+
+  if (!response.ok) {
+    throw new Error('Falha ao buscar membros do grupo no SharePoint.');
+  }
+
+  const data = await response.json();
+  return (data?.d?.results || []).map((user: any) => ({
+    id: user.Id,
+    title: user.Title,
+    email: user.Email,
+    loginName: user.LoginName
+  }));
+}
+
+export async function addUserToGroup(groupId: number, loginName: string): Promise<void> {
+  if (isDev()) {
+    console.log('Dev Mode: Adding user to group', groupId, loginName);
+    return;
+  }
+
+  const siteUrl = getSiteAbsoluteUrl();
+  const digest = await getRequestDigest();
+  const endpoint = `${siteUrl}/_api/web/sitegroups(${groupId})/users`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json; odata=verbose',
+      'Content-Type': 'application/json; odata=verbose',
+      'X-RequestDigest': digest
+    },
+    body: JSON.stringify({
+      '__metadata': { 'type': 'SP.User' },
+      'LoginName': loginName
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('SharePoint Add User Error:', errorText);
+    throw new Error('Falha ao adicionar usuário ao grupo.');
+  }
+}
+
+export async function removeUserFromGroup(groupId: number, userId: number): Promise<void> {
+  if (isDev()) {
+    console.log('Dev Mode: Removing user from group', groupId, userId);
+    return;
+  }
+
+  const siteUrl = getSiteAbsoluteUrl();
+  const digest = await getRequestDigest();
+  const endpoint = `${siteUrl}/_api/web/sitegroups(${groupId})/users/removebyid(${userId})`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'X-RequestDigest': digest
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error('Falha ao remover usuário do grupo.');
+  }
+}
+
+export async function searchUsers(query: string): Promise<{ title: string; loginName: string }[]> {
+  if (isDev()) {
+    return [
+      { title: 'Arlen Loran', loginName: 'i:0#.f|membership|arlenloran@gmail.com' },
+      { title: 'DHL Admin', loginName: 'i:0#.f|membership|admin@dhl.com' }
+    ].filter(u => u.title.toLowerCase().includes(query.toLowerCase()));
+  }
+
+  const siteUrl = getSiteAbsoluteUrl();
+  const endpoint = `${siteUrl}/_api/SP.UI.ApplicationPages.ClientPeoplePickerWebServiceInterface.clientPeoplePickerSearchUser`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json; odata=verbose',
+      'Content-Type': 'application/json; odata=verbose',
+      'X-RequestDigest': await getRequestDigest()
+    },
+    body: JSON.stringify({
+      'queryParams': {
+        '__metadata': { 'type': 'SP.UI.ApplicationPages.ClientPeoplePickerQueryParameters' },
+        'AllowEmailAddresses': true,
+        'AllowMultipleEntities': false,
+        'AllUrlZones': false,
+        'MaximumEntitySuggestions': 10,
+        'PrincipalSource': 15,
+        'PrincipalType': 1,
+        'QueryString': query
+      }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error('Falha ao pesquisar usuários.');
+  }
+
+  const data = await response.json();
+  const results = JSON.parse(data.d.ClientPeoplePickerSearchUser);
+  
+  return results.map((res: any) => ({
+    title: res.DisplayText,
+    loginName: res.Key
+  }));
+}
+
 export async function downloadFileFromSharePoint(serverRelativeUrl: string, fileName: string): Promise<Blob> {
   if (isDev()) {
     // Return a dummy PDF blob in dev mode
