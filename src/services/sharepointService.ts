@@ -291,11 +291,41 @@ export async function getGroupMembers(groupId: number): Promise<{ id: number; ti
   }));
 }
 
+async function ensureUser(loginName: string): Promise<any> {
+  if (isDev()) return { Id: 999, Title: 'User' };
+
+  const siteUrl = getSiteAbsoluteUrl();
+  const digest = await getRequestDigest();
+  const endpoint = `${siteUrl}/_api/web/ensureUser`;
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Accept': 'application/json; odata=verbose',
+      'Content-Type': 'application/json; odata=verbose',
+      'X-RequestDigest': digest
+    },
+    body: JSON.stringify({ logonName: loginName })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('SharePoint EnsureUser Error:', errorText);
+    throw new Error('Falha ao validar o usuário no SharePoint.');
+  }
+
+  const data = await response.json();
+  return data.d;
+}
+
 export async function addUserToGroup(groupId: number, loginName: string): Promise<void> {
   if (isDev()) {
     console.log('Dev Mode: Adding user to group', groupId, loginName);
     return;
   }
+
+  // First, ensure the user exists in the site collection
+  await ensureUser(loginName);
 
   const siteUrl = getSiteAbsoluteUrl();
   const digest = await getRequestDigest();
