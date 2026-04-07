@@ -311,6 +311,11 @@ async function ensureUser(loginName: string): Promise<any> {
   if (!response.ok) {
     const errorText = await response.text();
     console.error('SharePoint EnsureUser Error:', errorText);
+    
+    if (errorText.includes('could not be found')) {
+      throw new Error(`O usuário "${loginName}" não foi encontrado no diretório da organização. Usuários externos precisam ser convidados para o ambiente (Tenant) via SharePoint antes de serem adicionados a grupos por este aplicativo.`);
+    }
+    
     throw new Error('Falha ao validar o usuário no SharePoint.');
   }
 
@@ -412,6 +417,8 @@ export async function searchUsers(query: string): Promise<{ title: string; login
   const data = await response.json();
   const results = JSON.parse(data.d.ClientPeoplePickerSearchUser);
   
+  console.log('People Picker Results:', results);
+
   return results.map((res: any) => ({
     title: res.DisplayText,
     loginName: res.Key
