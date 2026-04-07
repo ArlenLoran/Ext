@@ -91,49 +91,59 @@ export async function ensureIndexListExists(): Promise<void> {
     headers: { Accept: 'application/json; odata=verbose' }
   });
   
-  if (checkResponse.ok) return; // List already exists
-  
-  // Create list
-  const createResponse = await fetch(`${siteUrl}/_api/web/lists`, {
-    method: 'POST',
-    headers: {
-      'Accept': 'application/json; odata=verbose',
-      'Content-Type': 'application/json; odata=verbose',
-      'X-RequestDigest': digest
-    },
-    body: JSON.stringify({
-      '__metadata': { 'type': 'SP.List' },
-      'AllowContentTypes': true,
-      'BaseTemplate': 100,
-      'ContentTypesEnabled': true,
-      'Description': 'Index de Notas Fiscais DACE',
-      'Title': INDEX_LIST_NAME
-    })
-  });
-  
-  if (!createResponse.ok) {
-    throw new Error('Falha ao criar a lista de indexação no SharePoint.');
+  if (!checkResponse.ok) {
+    // Create list
+    const createResponse = await fetch(`${siteUrl}/_api/web/lists`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json; odata=verbose',
+        'Content-Type': 'application/json; odata=verbose',
+        'X-RequestDigest': digest
+      },
+      body: JSON.stringify({
+        '__metadata': { 'type': 'SP.List' },
+        'AllowContentTypes': true,
+        'BaseTemplate': 100,
+        'ContentTypesEnabled': true,
+        'Description': 'Index de Notas Fiscais DACE',
+        'Title': INDEX_LIST_NAME
+      })
+    });
+    
+    if (!createResponse.ok) {
+      throw new Error('Falha ao criar a lista de indexação no SharePoint.');
+    }
   }
   
-  // Add InvoiceNumber field
-  await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/fields`, {
-    method: 'POST',
-    headers: {
-      'Accept': 'application/json; odata=verbose',
-      'Content-Type': 'application/json; odata=verbose',
-      'X-RequestDigest': digest
-    },
-    body: JSON.stringify({
-      '__metadata': { 'type': 'SP.Field' },
-      'Title': 'InvoiceNumber',
-      'FieldTypeKind': 2, // Text
-      'Required': false
-    })
+  // Check if InvoiceNumber field exists
+  const fieldCheck = await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/fields/getbytitle('InvoiceNumber')`, {
+    headers: { Accept: 'application/json; odata=verbose' }
   });
+
+  if (!fieldCheck.ok) {
+    // Add InvoiceNumber field
+    await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/fields`, {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json; odata=verbose',
+        'Content-Type': 'application/json; odata=verbose',
+        'X-RequestDigest': digest
+      },
+      body: JSON.stringify({
+        '__metadata': { 'type': 'SP.Field' },
+        'Title': 'InvoiceNumber',
+        'FieldTypeKind': 2, // Text
+        'Required': false
+      })
+    });
+  }
 }
 
 export async function getIndexData(): Promise<Record<string, string>> {
   if (isDev()) {
+    const saved = localStorage.getItem('dace_index_mock');
+    if (saved) return JSON.parse(saved);
+    
     return {
       '/sites/dev/Shared Documents/DACE/DACE_NF_12345.pdf': '12345',
       '/sites/dev/Shared Documents/DACE/DACE_NF_67890.pdf': '67890'
@@ -162,7 +172,13 @@ export async function getIndexData(): Promise<Record<string, string>> {
 
 export async function updateIndexItem(serverRelativeUrl: string, invoiceNumber: string): Promise<void> {
   if (isDev()) {
-    console.log('Dev Mode: Updating index', serverRelativeUrl, invoiceNumber);
+    const saved = localStorage.getItem('dace_index_mock');
+    const index = saved ? JSON.parse(saved) : {
+      '/sites/dev/Shared Documents/DACE/DACE_NF_12345.pdf': '12345',
+      '/sites/dev/Shared Documents/DACE/DACE_NF_67890.pdf': '67890'
+    };
+    index[serverRelativeUrl] = invoiceNumber;
+    localStorage.setItem('dace_index_mock', JSON.stringify(index));
     return;
   }
   
