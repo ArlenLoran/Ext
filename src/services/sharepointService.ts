@@ -170,6 +170,27 @@ export async function getIndexData(): Promise<Record<string, string>> {
   return index;
 }
 
+let cachedListType: string | null = null;
+
+async function getListType(): Promise<string> {
+  if (cachedListType) return cachedListType;
+  
+  if (isDev()) return `SP.Data.${INDEX_LIST_NAME}ListItem`;
+  
+  const siteUrl = getSiteAbsoluteUrl();
+  const response = await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')?$select=ListItemEntityTypeFullName`, {
+    headers: { Accept: 'application/json; odata=verbose' }
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Não foi possível obter o tipo da lista ${INDEX_LIST_NAME}.`);
+  }
+  
+  const data = await response.json();
+  cachedListType = data.d.ListItemEntityTypeFullName;
+  return cachedListType!;
+}
+
 export async function updateIndexItem(serverRelativeUrl: string, invoiceNumber: string): Promise<void> {
   if (isDev()) {
     const saved = localStorage.getItem('dace_index_mock');
@@ -184,6 +205,7 @@ export async function updateIndexItem(serverRelativeUrl: string, invoiceNumber: 
   
   const siteUrl = getSiteAbsoluteUrl();
   const digest = await getRequestDigest();
+  const listType = await getListType();
   
   // Check if item already exists to decide between POST (add) or MERGE (update)
   const checkEndpoint = `${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/items?$filter=Title eq '${escapeODataString(serverRelativeUrl)}'&$select=Id`;
@@ -194,9 +216,14 @@ export async function updateIndexItem(serverRelativeUrl: string, invoiceNumber: 
   const checkData = await checkResponse.json();
   const existingItem = checkData?.d?.results?.[0];
   
+  const payload = {
+    '__metadata': { 'type': listType },
+    'InvoiceNumber': invoiceNumber
+  };
+
   if (existingItem) {
     // Update
-    await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/items(${existingItem.Id})`, {
+    const response = await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/items(${existingItem.Id})`, {
       method: 'POST',
       headers: {
         'Accept': 'application/json; odata=verbose',
@@ -205,14 +232,17 @@ export async function updateIndexItem(serverRelativeUrl: string, invoiceNumber: 
         'X-HTTP-Method': 'MERGE',
         'IF-MATCH': '*'
       },
-      body: JSON.stringify({
-        '__metadata': { 'type': `SP.Data.${INDEX_LIST_NAME}ListItem` },
-        'InvoiceNumber': invoiceNumber
-      })
+      body: JSON.stringify(payload)
     });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('SharePoint Update Error:', errorText);
+      throw new Error('Falha ao atualizar o index no SharePoint.');
+    }
   } else {
     // Add
-    await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/items`, {
+    const response = await fetch(`${siteUrl}/_api/web/lists/getbytitle('${INDEX_LIST_NAME}')/items`, {
       method: 'POST',
       headers: {
         'Accept': 'application/json; odata=verbose',
@@ -220,11 +250,16 @@ export async function updateIndexItem(serverRelativeUrl: string, invoiceNumber: 
         'X-RequestDigest': digest
       },
       body: JSON.stringify({
-        '__metadata': { 'type': `SP.Data.${INDEX_LIST_NAME}ListItem` },
-        'Title': serverRelativeUrl,
-        'InvoiceNumber': invoiceNumber
+        ...payload,
+        'Title': serverRelativeUrl
       })
     });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('SharePoint Create Error:', errorText);
+      throw new Error('Falha ao criar o item de index no SharePoint.');
+    }
   }
 }
 
